@@ -29,6 +29,25 @@ const rooms = computed<RoomSummary[]>(() => {
   return list;
 });
 
+const joinedCount = computed(() => rooms.value.filter((room) => room.joined).length);
+const unreadTotal = computed(() =>
+  rooms.value.reduce((sum, room) => sum + (room.unreadCount ?? 0), 0),
+);
+const memberTotal = computed(() =>
+  rooms.value.reduce((sum, room) => sum + (room.memberCount ?? 0), 0),
+);
+
+const recentRooms = computed(() =>
+  rooms.value
+    .filter((room) => room.lastMessage)
+    .sort((a, b) => {
+      const left = new Date(a.lastMessage!.createdAt).getTime();
+      const right = new Date(b.lastMessage!.createdAt).getTime();
+      return right - left;
+    })
+    .slice(0, 5),
+);
+
 function cardMeta(room: RoomSummary): string {
   const bits = [`#${room.id}`];
   if (room.isPublic && !room.joined) {
@@ -66,69 +85,117 @@ async function open(room: RoomSummary) {
 </script>
 
 <template>
-  <div class="app-layout rooms-layout">
-    <RoomSidebar class="rooms-sidebar" />
-    <main class="welcome-pane">
-      <div class="workbench-inner">
-        <header class="wb-head">
-          <h1 class="wb-title">房间</h1>
-          <p class="wb-lead">
-            <span class="count">{{ rooms.length }}</span>
-            间 · 机器人是群成员：拉进来、挂在成员列表里，@它 就会逐字回复。
+  <div class="rooms-shell">
+    <RoomSidebar />
+    <main class="rooms-board">
+      <span class="board-watermark" aria-hidden="true">01</span>
+      <header class="rooms-head">
+        <div>
+          <div class="rooms-index">01 — ROOMS · 深海会议室</div>
+          <h1 class="rooms-title">今天聊<em>什么</em>？</h1>
+          <p class="rooms-lead">
+            选一个房间进去。机器人就坐在成员列表里，@ 它就会开口；
+            离开再回来，错过的每一句都还在。
           </p>
-        </header>
+        </div>
+        <div class="rooms-stats">
+          <div class="rooms-stat">
+            <b>{{ rooms.length }}</b>
+            <span>ROOMS</span>
+          </div>
+          <div class="rooms-stat">
+            <b>{{ joinedCount }}</b>
+            <span>JOINED</span>
+          </div>
+          <div class="rooms-stat">
+            <b>{{ unreadTotal }}</b>
+            <span>UNREAD</span>
+          </div>
+        </div>
+      </header>
 
-        <div class="wb-layout">
-          <div class="wb-grid">
+      <div class="rooms-body">
+        <div class="room-grid">
           <button
-            v-for="room in rooms"
+            v-for="(room, index) in rooms"
             :key="room.id"
-            class="wb-card"
-            :class="{ unjoined: !room.joined }"
+            class="room-card"
+            :class="{ unjoined: !room.joined, featured: index === 0 && rooms.length <= 2 }"
             :title="room.name"
+            :style="{ animationDelay: `${index * 45}ms` }"
             @click="open(room)"
           >
-            <span class="wb-card-head">
+            <span class="room-card-head">
               <span class="avatar" :class="avatarClass(room.id)">
                 {{ initialOf(room.name) }}
               </span>
-              <span class="wb-card-name">{{ room.name }}</span>
+              <span class="room-card-name">{{ room.name }}</span>
               <span v-if="room.unreadCount" class="unread">{{ room.unreadCount }}</span>
             </span>
-            <span v-if="room.topic" class="wb-card-topic">{{ room.topic }}</span>
-            <span class="wb-card-last">
+            <span v-if="room.topic" class="room-card-topic">{{ room.topic }}</span>
+            <span class="room-card-last">
               <template v-if="room.lastMessage">
                 {{ room.lastMessage.senderName }}：{{ plainPreview(room.lastMessage.content) }}
               </template>
+              <template v-else>还没有消息，进去说第一句。</template>
             </span>
-            <span class="wb-card-meta">{{ cardMeta(room) }}</span>
+            <span class="room-card-meta">{{ cardMeta(room) }}</span>
           </button>
 
-          <div v-if="rooms.length === 0" class="wb-empty">
-            <strong>还没有房间</strong>
-            <span>用左下角的「创建」开第一个房间，或「加入」一个私密房。</span>
+          <div v-if="rooms.length === 0" class="rooms-empty">
+            <strong>海底还很安静</strong>
+            <span>用左下角的「创建」开第一个房间，或「加入」一个已有房间。</span>
           </div>
-          </div>
-
-          <section class="wb-guide">
-            <h2>机器人怎么用</h2>
-            <ol class="wb-steps">
-              <li>
-                <span class="wb-step-no">01</span>
-                <p>点房间右上角「机器人」，填 baseUrl、API Key 和 model，创建机器人。</p>
-              </li>
-              <li>
-                <span class="wb-step-no">02</span>
-                <p>点「挂载」。它会像真人一样出现在成员列表里，有名字、有头像。</p>
-              </li>
-              <li>
-                <span class="wb-step-no">03</span>
-                <p>在输入框 @它，回复流式逐字打出；断线重连后缺的消息自动补上。</p>
-              </li>
-            </ol>
-          </section>
         </div>
+
+        <aside class="rooms-rail">
+          <section class="guide-panel">
+          <h2>机器人怎么用</h2>
+          <p class="guide-sub">{{ memberTotal }} 个座位 · 三步开聊</p>
+          <ol class="guide-steps">
+            <li class="guide-step">
+              <i>01</i>
+              <b>创建机器人</b>
+              点房间右上角「机器人」，填 baseUrl、API Key 与模型名。
+            </li>
+            <li class="guide-step">
+              <i>02</i>
+              <b>挂载进房间</b>
+              点「挂载」，它会像真人一样出现在成员列表里。
+            </li>
+            <li class="guide-step">
+              <i>03</i>
+              <b>@ 它说话</b>
+              回复会流式逐字打出；断线重连后缺口自动补齐。
+            </li>
+          </ol>
+        </section>
+
+        <section class="recap-panel">
+          <h2>最近动态</h2>
+          <ul v-if="recentRooms.length" class="recap-list">
+            <li
+              v-for="room in recentRooms"
+              :key="room.id"
+              class="recap-item"
+              @click="open(room)"
+            >
+              <span class="recap-room">{{ room.name }}</span>
+              <span class="recap-time">{{ formatRelative(room.lastMessage!.createdAt) }}</span>
+              <span class="recap-text">
+                {{ room.lastMessage!.senderName }}：{{ plainPreview(room.lastMessage!.content) }}
+              </span>
+            </li>
+          </ul>
+          <div v-else class="recap-empty">还没有人说话，第一个开口的就是你。</div>
+        </section>
+        </aside>
       </div>
+
+      <footer class="rooms-foot">
+        <span>DEEP SEA · LOCAL DEMO</span>
+        <span>{{ rooms.length }} 房间 · {{ memberTotal }} 个座位 · {{ joinedCount }} 已加入</span>
+      </footer>
     </main>
   </div>
 </template>
