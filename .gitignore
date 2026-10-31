@@ -8,3 +8,4 @@ playwright-report/
 screenshots/
 
 .workbuddy/
+.vite/
