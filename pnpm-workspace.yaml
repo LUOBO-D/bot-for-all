@@ -1,0 +1,10 @@
+packages:
+  - backend
+  - frontend
+
+allowBuilds:
+  esbuild: true
+  vue-demi: true
+
+onlyBuiltDependencies:
+  - esbuild
