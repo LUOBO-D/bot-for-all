@@ -1,0 +1,178 @@
+/* ============================================================
+   DESIGN TOKENS · bot-for-all 设计令牌（唯一事实源）
+   规则：
+   1. 任何组件样式只允许引用变量，不允许写死色值/字号/间距。
+   2. 新增令牌必须同时登记到 docs/design-tokens.md。
+   3. 主色只保留 aqua / coral / deep 三组，禁止新增第四主色。
+   ============================================================ */
+
+:root {
+  /* ---- 深海中性阶 ---- */
+  --ink: #04070f;
+  --ink-2: #0a1222;
+  --ink-3: #101b30;
+  --paper: #050a15;
+  --paper-2: #0b1424;
+  --paper-3: #0e1a2e;
+  --white: #f4faff;
+
+  --line: rgba(120, 180, 255, 0.1);
+  --line-strong: rgba(120, 180, 255, 0.22);
+  --line-on-ink: rgba(180, 220, 255, 0.12);
+
+  --text: #e6f0ff;
+  --muted: #a5b8d4;
+  --faint: #7e90ac;
+
+  --on-ink: #e9f3ff;
+  --on-ink-muted: #a9bfdc;
+  --on-ink-dim: #8aa0be;
+
+  /* ---- 主色：生物荧光青（交互） ---- */
+  --lime: #48e6c5;
+  --lime-hover: #6cf2d7;
+  --lime-active: #2fd3b2;
+  /* ---- 主色：珊瑚橙（机器人专属） ---- */
+  --rust: #ff8f5e;
+  --rust-ink: #ffb088;
+  /* ---- 语义色 ---- */
+  --danger: #ff7070;
+  --danger-soft: rgba(255, 112, 112, 0.12);
+
+  /* ---- 字阶（1.25 比例） ---- */
+  --fs-display: 34px;
+  --fs-h: 20px;
+  --fs-body: 15px;
+  --fs-sub: 13px;
+  --fs-mono: 11px;
+  --lh-body: 1.65;
+
+  --font-body: -apple-system, 'PingFang SC', 'Noto Sans SC', 'Microsoft YaHei',
+    system-ui, 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas,
+    'Liberation Mono', monospace;
+
+  /* ---- 4px 间距基线 ---- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+
+  /* ---- 圆角 / 阴影 ---- */
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 16px;
+  --r-xl: 22px;
+
+  --shadow-pop: 0 18px 48px -18px rgba(0, 0, 0, 0.75);
+  --shadow-dialog: 0 40px 120px -32px rgba(0, 0, 0, 0.9);
+
+  /* ---- 玻璃材质 ---- */
+  --glass: linear-gradient(165deg, rgba(24, 42, 72, 0.72), rgba(8, 15, 28, 0.86));
+  --glass-strong: linear-gradient(165deg, rgba(28, 48, 80, 0.82), rgba(9, 17, 31, 0.92));
+  --glass-border: rgba(126, 199, 255, 0.14);
+  --glass-inset: inset 0 1px 0 rgba(214, 240, 255, 0.08);
+  --glow-aqua: 0 0 0 1px rgba(72, 230, 197, 0.25), 0 18px 60px -18px rgba(72, 230, 197, 0.25);
+  --glow-coral: 0 0 0 1px rgba(255, 143, 94, 0.22), 0 18px 60px -20px rgba(255, 143, 94, 0.2);
+
+  /* ---- 动效三档 ---- */
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --dur-instant: 120ms;
+  --dur-fast: 180ms;
+  --dur-base: 260ms;
+  --dur-slow: 480ms;
+
+  /* ---- 触控与层级 ---- */
+  --tap: 44px;
+  --z-base: 1;
+  --z-sticky: 10;
+  --z-pop: 100;
+  --z-dialog: 1000;
+
+  /* ---- Element Plus 映射 ---- */
+  --el-color-primary: #48e6c5;
+  --el-color-primary-dark-2: #2fd3b2;
+  --el-color-primary-light-3: #74efd8;
+  --el-color-primary-light-5: #9af4e3;
+  --el-color-primary-light-7: #bff8ed;
+  --el-color-primary-light-8: #d3faf4;
+  --el-color-primary-light-9: rgba(72, 230, 197, 0.12);
+  --el-bg-color: var(--paper-2);
+  --el-bg-color-page: var(--paper);
+  --el-bg-color-overlay: #0c1728;
+  --el-fill-color: rgba(120, 180, 255, 0.08);
+  --el-fill-color-light: rgba(120, 180, 255, 0.06);
+  --el-fill-color-lighter: rgba(120, 180, 255, 0.04);
+  --el-fill-color-blank: transparent;
+  --el-text-color-primary: var(--text);
+  --el-text-color-regular: var(--text);
+  --el-text-color-secondary: var(--muted);
+  --el-text-color-placeholder: var(--faint);
+  --el-text-color-disabled: var(--faint);
+  --el-border-color: rgba(140, 190, 255, 0.18);
+  --el-border-color-light: rgba(140, 190, 255, 0.14);
+  --el-border-color-lighter: var(--line);
+  --el-border-color-extra-light: var(--line);
+  --el-border-color-dark: rgba(140, 190, 255, 0.3);
+  --el-overlay-color-lighter: rgba(2, 6, 14, 0.72);
+  --el-mask-color: rgba(2, 6, 14, 0.72);
+  --el-box-shadow: var(--shadow-pop);
+}
+
+/* ============================================================
+   密度模式
+   comfort  = 大学生默认，行高与留白优先
+   compact  = 科研用户，信息密度优先
+   切换入口：侧栏底部「密度」按钮，写入 localStorage
+   ============================================================ */
+
+:root[data-density='compact'] {
+  --fs-display: 30px;
+  --fs-h: 18px;
+  --fs-body: 14px;
+  --fs-sub: 12px;
+  --fs-mono: 10px;
+  --lh-body: 1.55;
+}
+
+:root[data-density='compact'] .msg {
+  padding: 1px 0;
+  margin-top: 5px;
+}
+
+:root[data-density='compact'] .msg.compact {
+  margin-top: 0;
+}
+
+:root[data-density='compact'] .bubble {
+  padding-top: 7px;
+  padding-bottom: 7px;
+}
+
+:root[data-density='compact'] .message-list {
+  padding-top: 16px;
+}
+
+:root[data-density='compact'] .room-card {
+  padding: 12px 14px;
+  gap: 6px;
+}
+
+:root[data-density='compact'] .room-row {
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+
+:root[data-density='compact'] .composer-shell {
+  margin-bottom: 12px;
+}
+
+:root[data-density='compact'] .chat-topbar {
+  padding-top: 10px;
+  padding-bottom: 10px;
+}

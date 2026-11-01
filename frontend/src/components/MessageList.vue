@@ -148,7 +148,7 @@ onMounted(scrollToBottom);
 </script>
 
 <template>
-  <div ref="container" class="message-list" @scroll.passive="onScroll">
+  <div ref="container" class="message-list" aria-live="polite" aria-label="房间消息" @scroll.passive="onScroll">
     <div v-if="hasMore" class="history-hint">
       {{ loadingOlder ? '加载更早的消息…' : '向上滚动加载更早的消息' }}
     </div>

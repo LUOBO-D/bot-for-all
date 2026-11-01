@@ -28,6 +28,8 @@ interface ChatState {
   bound: boolean;
   loading: boolean;
   connected: boolean;
+  lastSentId: number | null;
+  pendingSends: number;
 }
 
 interface NewMessagePayload {
@@ -170,6 +172,8 @@ export const useChatStore = defineStore('chat', {
     bound: false,
     loading: false,
     connected: false,
+    lastSentId: null,
+    pendingSends: 0,
   }),
   getters: {
     currentRoom(state): RoomSummary | null {
@@ -216,6 +220,17 @@ export const useChatStore = defineStore('chat', {
       const socket = getSocket();
       this.connected = socket.connected;
       socket.on('message:new', (payload: NewMessagePayload) => {
+        const me = useAuthStore().user?.id;
+        if (this.pendingSends > 0 && me && payload.message.senderId === me) {
+          this.pendingSends = Math.max(0, this.pendingSends - 1);
+          const sentId = payload.message.id;
+          this.lastSentId = sentId;
+          window.setTimeout(() => {
+            if (this.lastSentId === sentId) {
+              this.lastSentId = null;
+            }
+          }, 1200);
+        }
         void this.handleNew(payload.roomId, payload.message);
       });
       socket.on('message:delta', (payload: DeltaPayload) => {
@@ -392,6 +407,10 @@ export const useChatStore = defineStore('chat', {
       timer = window.setTimeout(() => {
         finish(false, '发送超时，请重试');
       }, SEND_ACK_TIMEOUT_MS);
+      this.pendingSends += 1;
+      window.setTimeout(() => {
+        this.pendingSends = 0;
+      }, 4000);
       getSocket().emit(
         'message:send',
         {
@@ -403,7 +422,14 @@ export const useChatStore = defineStore('chat', {
         (response: { ok?: boolean; message?: Message | string }) => {
           if (response?.ok) {
             if (response.message && typeof response.message === 'object') {
-              void this.handleNew(roomId, response.message);
+              const created = response.message as Message;
+              this.lastSentId = created.id;
+              window.setTimeout(() => {
+                if (this.lastSentId === created.id) {
+                  this.lastSentId = null;
+                }
+              }, 1200);
+              void this.handleNew(roomId, created);
             }
             finish(true);
             return;

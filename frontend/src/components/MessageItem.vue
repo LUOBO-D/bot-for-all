@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
@@ -81,6 +81,110 @@ const isRich = computed(
 );
 const reactions = computed(() => props.message.reactions ?? []);
 
+/* 刚发出的消息播放一次声纹涟漪（只依赖发送记录，不依赖系统时钟） */
+const fresh = ref(false);
+onMounted(() => {
+  if (self.value && !bot.value && chat.lastSentId === props.message.id) {
+    fresh.value = true;
+    window.setTimeout(() => {
+      fresh.value = false;
+    }, 760);
+  }
+});
+
+/* ---- 长消息折叠 ---- */
+const expanded = ref(false);
+const isLong = computed(
+  () => props.message.content.length > 200 && !rendered.value.includes('<pre'),
+);
+const clamped = computed(() => isLong.value && !expanded.value);
+
+/* ---- v-html 渲染后增强：代码块复制按钮 + @提及高亮 ---- */
+const contentEl = ref<HTMLElement | null>(null);
+
+async function copyText(text: string, button: HTMLButtonElement) {
+  try {
+    await navigator.clipboard.writeText(text);
+    button.textContent = '已复制';
+  } catch {
+    button.textContent = '复制失败';
+  }
+  window.setTimeout(() => {
+    button.textContent = '复制';
+  }, 1400);
+}
+
+function enhanceBlocks() {
+  const root = contentEl.value;
+  if (!root) {
+    return;
+  }
+  root.querySelectorAll('pre').forEach((pre) => {
+    if (pre.closest('.code-block')) {
+      return;
+    }
+    const code = pre.querySelector('code');
+    const wrapper = document.createElement('div');
+    wrapper.className = 'code-block';
+    const head = document.createElement('div');
+    head.className = 'code-head';
+    const lang = document.createElement('span');
+    lang.className = 'code-lang';
+    const cls = code?.className ?? '';
+    lang.textContent = cls.match(/language-(\w+)/)?.[1] ?? 'code';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'code-copy';
+    button.textContent = '复制';
+    button.addEventListener('click', () => {
+      void copyText(code?.textContent ?? pre.textContent ?? '', button);
+    });
+    head.append(lang, button);
+    pre.parentNode?.insertBefore(wrapper, pre);
+    wrapper.append(head, pre);
+  });
+
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      const parent = node.parentElement;
+      if (!parent || parent.closest('pre,code,a,.mention')) {
+        return NodeFilter.FILTER_REJECT;
+      }
+      return /@[\w一-龥.-]+/.test(node.nodeValue ?? '')
+        ? NodeFilter.FILTER_ACCEPT
+        : NodeFilter.FILTER_SKIP;
+    },
+  });
+  const targets: Text[] = [];
+  while (walker.nextNode()) {
+    targets.push(walker.currentNode as Text);
+  }
+  for (const textNode of targets) {
+    const source = textNode.nodeValue ?? '';
+    const fragment = document.createDocumentFragment();
+    const pattern = /@[\w一-龥.-]+/g;
+    let cursor = 0;
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(source))) {
+      if (match.index > cursor) {
+        fragment.append(source.slice(cursor, match.index));
+      }
+      const span = document.createElement('span');
+      span.className = 'mention';
+      span.textContent = match[0];
+      fragment.append(span);
+      cursor = match.index + match[0].length;
+    }
+    if (cursor < source.length) {
+      fragment.append(source.slice(cursor));
+    }
+    textNode.replaceWith(fragment);
+  }
+}
+
+onMounted(() => nextTick(enhanceBlocks));
+watch(rendered, () => nextTick(enhanceBlocks));
+
 function hasReacted(userIds: number[]): boolean {
   return Boolean(auth.user && userIds.includes(auth.user.id));
 }
@@ -146,7 +250,17 @@ function scrollToReply() {
 <template>
   <div
     class="msg"
-    :class="{ self, bot, compact, rich: isRich, highlight: props.highlight, deleted }"
+    :class="{
+      self,
+      bot,
+      compact,
+      rich: isRich,
+      highlight: props.highlight,
+      deleted,
+      streaming: message.status === 'streaming',
+      failed: message.status === 'error',
+      fresh,
+    }"
     data-testid="message"
     :data-seq="message.seq"
   >
@@ -172,9 +286,19 @@ function scrollToReply() {
         <div class="bubble" :class="{ 'bubble-deleted': deleted }">
           <div v-if="deleted" class="bubble-content msg-deleted">消息已撤回</div>
           <template v-else>
-            <div class="bubble-content" v-html="rendered"></div>
+            <div ref="contentEl" class="bubble-content" :class="{ clamped }" v-html="rendered"></div>
             <span v-if="message.status === 'streaming'" class="cursor"></span>
-            <span v-if="message.status === 'error'" class="msg-error">生成失败</span>
+            <span v-if="message.status === 'error'" class="msg-error">
+              生成失败<span class="msg-error-hint">再次 @ 机器人可重试</span>
+            </span>
+            <button
+              v-if="isLong"
+              class="collapse-toggle"
+              type="button"
+              @click="expanded = !expanded"
+            >
+              {{ expanded ? '收起' : `展开全文（${message.content.length} 字）` }}
+            </button>
           </template>
         </div>
         <button

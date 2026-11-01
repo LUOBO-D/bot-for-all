@@ -5,6 +5,7 @@ import { ElMessage } from 'element-plus';
 import http, { errorMessage } from '../api/http';
 import { useAuthStore } from '../stores/auth';
 import { useChatStore } from '../stores/chat';
+import { useUiStore } from '../stores/ui';
 import type { RoomSummary } from '../types';
 import { avatarClass, formatRelative, initialOf, plainPreview } from '../utils/format';
 import Icon from './Icon.vue';
@@ -16,6 +17,7 @@ const emit = defineEmits<{ navigate: [] }>();
 
 const router = useRouter();
 const auth = useAuthStore();
+const ui = useUiStore();
 const chat = useChatStore();
 
 const query = ref('');
@@ -206,6 +208,17 @@ async function joinRoom() {
         加入
       </button>
     </div>
+
+    <button
+      class="density-toggle"
+      type="button"
+      :title="ui.density === 'compact' ? '切换为舒适密度' : '切换为紧凑密度'"
+      :aria-label="ui.density === 'compact' ? '切换为舒适密度' : '切换为紧凑密度'"
+      @click="ui.toggle"
+    >
+      <span class="density-label">显示密度</span>
+      <span class="density-value">{{ ui.density === 'compact' ? '紧凑' : '舒适' }}</span>
+    </button>
 
     <button class="sidebar-user" @click="profileVisible = true">
       <span class="avatar avatar-sm" :class="userAvatar">{{ userInitial }}</span>
