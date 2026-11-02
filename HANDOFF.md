@@ -52,7 +52,7 @@ pnpm dev
 ```bash
 # 后端全量（需要 MySQL 已启动）
 pnpm --filter backend test
-# 当前：92 个测试文件，862 passed / 1 skipped
+# 当前：94 个测试文件，874 passed / 1 skipped
 
 # 前端类型检查 + 构建
 pnpm --filter frontend build
@@ -63,7 +63,7 @@ pnpm build
 # 浏览器 E2E；必须先停掉本地 pnpm dev，端口 3000 不能被占用
 pnpm exec playwright install chromium
 pnpm test:e2e
-# 当前：76 passed
+# 当前：78 passed
 ```
 
 E2E 使用独立 `chat_e2e` 数据库，并以 `CAPTCHA_ENABLED=false`、`RATE_LIMIT_ENABLED=false` 启动自己的后端；Playwright 配置为 `reuseExistingServer: false`。
@@ -191,7 +191,44 @@ docker compose --env-file .env.production -f docker-compose.prod.yml \
 - [ ] `.env` 已按 `.env.example` 填好，`JWT_SECRET` / `BOT_KEY_SECRET` / `ADMIN_PASSWORD` 不是示例值。
 - [ ] `pnpm migrate` 成功，`pnpm seed:admin` 成功。
 - [ ] `curl /api/health` 返回 `db: up`。
-- [ ] 后端 862 passed / 1 skipped，E2E 76 passed，`pnpm build` 通过。
+- [ ] 后端 874 passed / 1 skipped，E2E 78 passed，`pnpm build` 通过。
 - [ ] 已确认 `git status` 中没有 `.env`、上传文件、测试产物。
 - [ ] 已推送 `cmd` 并等待 GitHub Actions 通过。
 - [ ] 生产部署前已替换全部密钥，并确认 `ALLOW_PRIVATE_BOT_URLS=false`。
+
+---
+
+## 9. QA 测试交接（当前暂停点）
+
+已完成的稳定性收尾：
+
+- 生产 Nginx `Permissions-Policy` 允许同源麦克风（`microphone=(self)`）。
+- 390px 顶栏改为「搜索 / 成员 / 更多」，次级动作进入底部 sheet，无横向溢出。
+- axios 30s 超时；上传 120s；`/auth/me` 8s 启动兜底。
+- Redis 运行期断线无限退避重连；初次连接 3s 超时后仍回退内存。
+- 切房代次保护、补洞失败不丢实时消息、旧消息跳转等待列表展开、搜索失败独立错误。
+- 单用户封禁/降级加 MySQL 命名锁，避免并发清空最后一个管理员。
+- 用户设置并发合并、bot 测试 10 次/分钟、链接预览 20 次/分钟 + 全局并发 8。
+- 「回到底部」不再遮挡消息；消息列表/Composer/表情补可访问性语义。
+- 生产 compose 全部服务加 json-file 日志轮转（10m×3）。
+- 本地开发库中 19 个 `sp-*` / `sp2-*` / `dbg-*` / `vis-media-*` 测试房间及附件已清理。
+
+建议 QA 重点：
+
+1. 真实手机 390px / 360px：顶栏不横向滚动、标题可见、「更多」里能进设置/媒体/投票。
+2. 生产 Nginx（不是 Vite dev）：语音消息录音权限、上传、WebSocket 反代。
+3. 弱网/断网：首屏 8s 内可进入、恢复后能重新拉 `/auth/me`；切房连点不误清旧房间未读。
+4. 多实例（`--scale backend=2` + Redis）：Redis 重启后限流/在线/验证码恢复；机器人停止/去抖目前仍是进程内语义（见下）。
+5. 导出：个人 JSON/ZIP、房间媒体包、通知 CSV、管理端 CSV。
+6. 管理端并发：两个管理员同时互封/互降级应返回 `LAST_ADMIN` 或 `ADMIN_BUSY`，不能出现 0 管理员。
+
+仍未处理（已知，不是回归）：
+
+- 机器人停止/去抖/禁用缓存仍是进程内状态；多副本下停止可能不跨副本、`all` 去抖可能重复回复。
+- Redis presence 的 TTL 只在 `room:join` 续期；长连接超过 1 小时可能显示离线。
+- 房间列表未读数仍是逐房间 `COUNT(*)` 子查询，超多未读/多房间时有性能风险。
+- 房间打开失败仍可能显示空壳（有 toast，但没有明确错误页/返回按钮）；离线启动 `user` 为 null 时缺少重试入口。
+- 管理端趋势图各指标独立缩放、无 y 轴刻度，不适合跨指标比较。
+- 生产 MySQL 仍用 root 连接；建议后续建独立业务用户并只授权 `chat` 库。
+- 未配置 CSP；目前依赖 DOMPurify + 安全头。
+- CI 只跑测试/构建/E2E，不构建生产 Docker 镜像；Redis live 用例在无 Redis 的 CI 中跳过。

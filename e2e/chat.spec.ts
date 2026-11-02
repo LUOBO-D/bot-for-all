@@ -265,6 +265,41 @@ test('command palette and room search', async ({ browser }) => {
   await context.close();
 });
 
+test('room search failure is not reported as no matches', async ({ browser }) => {
+  const suffix = Date.now().toString().slice(-8);
+  const context = await browser.newContext();
+  const page = await context.newPage();
+
+  await register(page, `e2e_serr_${suffix}`);
+  await createRoom(page, `serr-room-${suffix}`);
+  await send(page, 'search failure needle');
+  await expect(
+    page.getByTestId('message').filter({ hasText: 'search failure needle' }),
+  ).toHaveCount(1);
+
+  await page.route('**/api/rooms/*/search*', (route) =>
+    route.fulfill({
+      status: 500,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: { message: 'search unavailable' } }),
+    }),
+  );
+
+  await page.getByTestId('search-open').click();
+  await page.locator('.room-search-bar input').fill('needle');
+  await expect(page.getByTestId('search-error')).toBeVisible();
+  await expect(page.getByTestId('search-error')).toContainText('搜索失败');
+  await expect(page.getByText('没有匹配消息')).toHaveCount(0);
+
+  // The same query recovers once the endpoint does.
+  await page.unroute('**/api/rooms/*/search*');
+  await page.getByTestId('search-retry').click();
+  await expect(page.locator('.search-result')).toHaveCount(1);
+  await expect(page.getByTestId('search-error')).toHaveCount(0);
+
+  await context.close();
+});
+
 test('filters room search by sender', async ({ browser }) => {
   const suffix = Date.now().toString().slice(-8);
   const owner = `e2e_sfilter_a_${suffix}`;
@@ -3671,6 +3706,78 @@ test.describe('mobile', () => {
 
     await swipe({ text: 'gesture target', fromX: 320, toX: 220 });
     await expect(page.locator('.reply-bar')).toBeVisible();
+
+    await context.close();
+  });
+
+  test('compact topbar moves secondary actions into the more sheet', async ({ browser }) => {
+    const suffix = Date.now().toString().slice(-8);
+    const roomName = `m-topbar-${suffix}`;
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const page = await context.newPage();
+
+    await register(page, `e2e_mtop_${suffix}`);
+    await createRoom(page, roomName);
+    await send(page, 'topbar target');
+
+    // Title and the two primary actions stay on the bar.
+    await expect(page.getByTestId('room-title')).toBeVisible();
+    await expect(page.getByTestId('room-title')).toHaveText(roomName);
+    await expect(page.getByTestId('search-open')).toBeVisible();
+    await expect(page.getByTestId('members-open')).toBeVisible();
+    await expect(page.getByTestId('more-open')).toBeVisible();
+
+    // Secondary actions moved off the bar.
+    await expect(page.getByTestId('select-mode')).toBeHidden();
+    await expect(page.getByTestId('media-open')).toBeHidden();
+    await expect(page.getByTestId('poll-open')).toBeHidden();
+    await expect(page.getByTestId('settings-open')).toBeHidden();
+
+    const layout = await page.evaluate(() => {
+      const bar = document.querySelector<HTMLElement>('[data-testid="chat-topbar"]');
+      const title = document.querySelector<HTMLElement>('[data-testid="room-title"]');
+      if (!bar || !title) {
+        throw new Error('topbar missing');
+      }
+      return {
+        documentScrollWidth: document.documentElement.scrollWidth,
+        documentClientWidth: document.documentElement.clientWidth,
+        barScrollWidth: bar.scrollWidth,
+        barClientWidth: bar.clientWidth,
+        titleWidth: title.getBoundingClientRect().width,
+      };
+    });
+    expect(layout.documentScrollWidth).toBeLessThanOrEqual(layout.documentClientWidth);
+    expect(layout.barScrollWidth).toBeLessThanOrEqual(layout.barClientWidth + 1);
+    expect(layout.titleWidth).toBeGreaterThan(80);
+
+    // The sheet carries every action that left the bar, including settings.
+    await page.getByTestId('more-open').click();
+    const sheet = page.getByTestId('more-sheet');
+    await expect(sheet).toBeVisible();
+    await expect(page.getByTestId('more-select')).toBeVisible();
+    await expect(page.getByTestId('more-media')).toBeVisible();
+    await expect(page.getByTestId('more-pins')).toBeVisible();
+    await expect(page.getByTestId('more-poll')).toBeVisible();
+    await expect(page.getByTestId('more-bot')).toBeVisible();
+    await expect(page.getByTestId('more-settings')).toBeVisible();
+
+    await page.getByTestId('more-settings').click();
+    await expect(sheet).toBeHidden();
+    const settings = page.locator('.el-dialog').filter({ hasText: '房间设置' });
+    await expect(settings).toBeVisible();
+    await settings.getByRole('button', { name: '关闭', exact: true }).click();
+    await expect(settings).toBeHidden();
+
+    // Accessibility contract for the transcript and composer controls.
+    await expect(page.locator('.message-list')).toHaveAttribute('role', 'log');
+    await expect(page.locator('.message-list')).toHaveAttribute('tabindex', '0');
+    await expect(page.locator('.message-list')).toHaveAttribute('aria-label', '消息列表');
+    await expect(page.getByTestId('send')).toHaveAttribute('aria-label', '发送');
+    await page.getByTestId('emoji-open').click();
+    const emoji = page.locator('.emoji-item').first();
+    await expect(emoji).toHaveAttribute('role', 'option');
+    await expect(emoji).toHaveAttribute('aria-selected', 'false');
 
     await context.close();
   });

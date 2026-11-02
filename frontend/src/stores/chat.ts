@@ -322,6 +322,11 @@ type SocketListener = Parameters<Socket['on']>[1];
 let unbindSocket: (() => void) | null = null;
 // A late GET /me/settings must not clobber a choice the user just made.
 let settingsRequestId = 0;
+// Room switches are async end to end (join ack, socket join, snapshot), so a
+// fast A→B switch can finish A's chain after B already owns the view. Every
+// openRoom run takes a generation; a stale run may leave cache behind but must
+// never mark read, drop the loading flag, or toast over the new room.
+let openRoomGeneration = 0;
 
 function waitForSocketConnect(): Promise<void> {
   const socket = getSocket();
@@ -944,6 +949,8 @@ export const useChatStore = defineStore('chat', {
       this.connected = false;
     },
     async openRoom(roomId: number, inviteCode?: string): Promise<boolean> {
+      const generation = ++openRoomGeneration;
+      const stale = () => generation !== openRoomGeneration;
       if (this.currentRoomId != null && this.currentRoomId !== roomId) {
         this.leaveSocket(this.currentRoomId);
       }
@@ -953,13 +960,30 @@ export const useChatStore = defineStore('chat', {
         await http.post(`/rooms/${roomId}/join`, {
           inviteCode: inviteCode || undefined,
         });
+        if (stale()) {
+          return false;
+        }
         await waitForSocketConnect();
+        if (stale()) {
+          return false;
+        }
         await joinSocket(roomId, true);
+        if (stale()) {
+          // This join landed after a newer room switch. Undo it unless the
+          // user came back to this room in the meantime (A→B→A).
+          if (this.currentRoomId !== roomId) {
+            this.leaveSocket(roomId);
+          }
+          return false;
+        }
         this.watchRooms();
         const { data } = await http.get<{ messages: Message[]; hasMore: boolean }>(
           `/rooms/${roomId}/messages`,
           { params: { limit: 50 } },
         );
+        if (stale()) {
+          return false;
+        }
         const merged = new Map<number, Message>();
         for (const message of this.messages[roomId] ?? []) {
           merged.set(message.seq, message);
@@ -996,6 +1020,9 @@ export const useChatStore = defineStore('chat', {
           delete this.unreadMarker[roomId];
         }
         await this.refreshMembers(roomId);
+        if (stale()) {
+          return false;
+        }
         this.markRoomRead(roomId);
         if (latest) {
           this.updateRoomPreview(roomId, latest, { markRead: true });
@@ -1003,10 +1030,16 @@ export const useChatStore = defineStore('chat', {
         }
         return true;
       } catch (error) {
-        ElMessage.error(errorMessage(error));
+        // A stale run's failure belongs to the room the user already left;
+        // toasting it would blame the new room for the old request.
+        if (!stale()) {
+          ElMessage.error(errorMessage(error));
+        }
         return false;
       } finally {
-        this.loading = false;
+        if (!stale()) {
+          this.loading = false;
+        }
       }
     },
     async rejoin(roomId: number) {
@@ -1705,7 +1738,13 @@ export const useChatStore = defineStore('chat', {
         return;
       }
       if (message.seq > last + 1) {
-        await this.fillGap(roomId);
+        try {
+          await this.fillGap(roomId);
+        } catch {
+          // The gap repair is best-effort: the live row below still belongs in
+          // the transcript, and advancing lastSeq keeps later rows contiguous.
+          // A later rejoin/refresh retries the missing range from the server.
+        }
       }
       this.upsertMessage(roomId, message);
       this.lastSeq[roomId] = Math.max(this.lastSeq[roomId] ?? 0, message.seq);
@@ -1757,7 +1796,14 @@ export const useChatStore = defineStore('chat', {
         (message) => message.seq === payload.seq,
       );
       if (!target) {
-        await this.fillGap(payload.roomId);
+        try {
+          await this.fillGap(payload.roomId);
+        } catch {
+          // Keep going: if the row did make it into the gap response we can
+          // still apply the final below. Otherwise the next rejoin/refresh
+          // fetches the finalised row from the server instead of throwing the
+          // socket event away.
+        }
         target = this.messages[payload.roomId]?.find(
           (message) => message.seq === payload.seq,
         );

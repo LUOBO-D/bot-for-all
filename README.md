@@ -167,7 +167,7 @@ pnpm build
 
 E2E 使用独立 `chat_e2e` 数据库，并以 `CAPTCHA_ENABLED=false`、`RATE_LIMIT_ENABLED=false` 启动自己的后端；请先停掉本地 `pnpm dev`（后端 `reuseExistingServer:false`，端口 3000 被占用会直接失败）。
 
-当前基线（2026-11-02）：后端 `862 passed / 1 skipped`（92 个测试文件），Playwright `76 passed`，`pnpm build` 通过。
+当前基线（2026-11-02，稳定性收尾后）：后端 `874 passed / 1 skipped`（94 个测试文件），Playwright `78 passed`，`pnpm build` 通过。
 
 ## 说明
 

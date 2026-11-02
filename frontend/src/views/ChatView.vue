@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import BotDialog from '../components/BotDialog.vue';
@@ -43,6 +43,10 @@ const chat = useChatStore();
 
 const sidebarOpen = ref(false);
 const membersOpen = ref(false);
+// The mobile "more" sheet holds the actions the topbar no longer shows at
+// 390px; it is only reachable from the compact bar.
+const moreOpen = ref(false);
+const messageListRef = ref<InstanceType<typeof MessageList> | null>(null);
 const profileVisible = ref(false);
 const profileMember = ref<Member | null>(null);
 const botVisible = ref(false);
@@ -102,6 +106,12 @@ const searchResults = ref<Message[]>([]);
 const searchHasMore = ref(false);
 const searchLoadingMore = ref(false);
 const searching = ref(false);
+// A failed request is not an empty result set: keep its own state so the panel
+// can offer a retry instead of claiming there were no matches.
+const searchError = ref('');
+// Retry re-runs the same query/filter watcher without pretending anything
+// about the inputs changed.
+const searchRetry = ref(0);
 const highlightSeq = ref<number | null>(null);
 // Multi-select is open to every member (bulk forward); only bulk delete stays
 // moderator-only. Seqs, not objects, keep a row's identity across a re-render.
@@ -1007,6 +1017,7 @@ function loadSearchPreferences() {
   searchFrom.value = filters.from;
   searchTo.value = filters.to;
   searchFilterError.value = '';
+  searchError.value = '';
 }
 
 // Filters are a preference, not part of one query, so closing the panel or
@@ -1051,6 +1062,7 @@ function toggleSearch() {
     searchQuery.value = '';
     resetSearchResults();
     searchFilterError.value = '';
+    searchError.value = '';
     return;
   }
   pruneMissingSender();
@@ -1094,22 +1106,25 @@ function resetSearchResults() {
 // The content query and every filter are AND-ed, so any change re-runs the
 // search. An inverted date range is a local error: the server would reject it
 // with 400, so no request is sent while the form is invalid.
-watch([searchQuery, searchSenderId, searchFrom, searchTo], () => {
+watch([searchQuery, searchSenderId, searchFrom, searchTo, searchRetry], () => {
   window.clearTimeout(searchTimer);
   searchRequestId += 1;
   resetSearchResults();
   const params = currentSearchParams();
   if (!params) {
     searchFilterError.value = '';
+    searchError.value = '';
     searching.value = false;
     return;
   }
   if (searchFrom.value && searchTo.value && searchFrom.value > searchTo.value) {
     searchFilterError.value = '开始日期不能晚于结束日期';
+    searchError.value = '';
     searching.value = false;
     return;
   }
   searchFilterError.value = '';
+  searchError.value = '';
   // The previous page is already gone, so show the pending state during the
   // debounce as well; otherwise the empty list reads as "no matches".
   searching.value = true;
@@ -1129,6 +1144,7 @@ watch([searchQuery, searchSenderId, searchFrom, searchTo], () => {
     } catch {
       if (requestId === searchRequestId) {
         resetSearchResults();
+        searchError.value = '搜索失败，请重试';
       }
     } finally {
       if (requestId === searchRequestId) {
@@ -1137,6 +1153,12 @@ watch([searchQuery, searchSenderId, searchFrom, searchTo], () => {
     }
   }, 250);
 });
+
+// A failed search keeps its inputs; this re-runs them without the user having
+// to touch the query (the watcher treats the counter as a new request).
+function retrySearch() {
+  searchRetry.value += 1;
+}
 
 // Appends the next page using the current filters and the shown result count
 // as offset. A message deleted or inserted between pages shifts the seq
@@ -1166,6 +1188,7 @@ async function loadMoreSearchResults() {
     searchHasMore.value = data.hasMore;
   } catch (error) {
     if (requestId === searchRequestId) {
+      searchError.value = '加载更多失败，请重试';
       ElMessage.error(errorMessage(error));
     }
   } finally {
@@ -1222,14 +1245,15 @@ async function jumpTo(seq: number): Promise<boolean> {
     ElMessage.error(errorMessage(error));
     return false;
   }
-  await nextTick();
+  // The list owns its window: setting the highlight first would only style a
+  // row that may not be mounted yet. Ask it to unfold and wait for the row to
+  // exist before deciding the message is unavailable.
   highlightSeq.value = seq;
-  const element = document.querySelector(`[data-seq="${seq}"]`);
-  if (!element) {
-    ElMessage.info('目标消息正在加载，请稍后重试');
+  const found = await messageListRef.value?.revealMessage(seq);
+  if (!found) {
+    ElMessage.info('目标消息暂不可用，请稍后重试');
     return false;
   }
-  element.scrollIntoView({ behavior: 'smooth', block: 'center' });
   window.clearTimeout(highlightTimer);
   highlightTimer = window.setTimeout(() => {
     highlightSeq.value = null;
@@ -1242,6 +1266,7 @@ async function jumpToResult(message: Message) {
   searchQuery.value = '';
   resetSearchResults();
   searchFilterError.value = '';
+  searchError.value = '';
   await jumpTo(message.seq);
 }
 
@@ -1301,14 +1326,15 @@ onUnmounted(() => socket.off('room:updated', onRoomUpdated));
 
 // The invite code is a one-shot credential: once the join succeeded it is
 // dropped from the URL so a refresh or a shared link cannot replay it.
-async function openRoomWithInvite(id: number, invite: string | undefined) {
+async function openRoomWithInvite(id: number, invite: string | undefined): Promise<boolean> {
   const ok = await chat.openRoom(id, invite);
   if (!ok || !invite || !('invite' in route.query)) {
-    return;
+    return ok;
   }
   const query = { ...route.query };
   delete query.invite;
   await router.replace({ query });
+  return ok;
 }
 
 // Marks a room switch in flight so the ?seq= watcher does not jump before
@@ -1317,10 +1343,19 @@ let openingRoomId: number | null = null;
 
 async function openRoomAndApplySeq(id: number, invite: string | undefined) {
   openingRoomId = id;
+  let opened = false;
   try {
-    await openRoomWithInvite(id, invite);
+    opened = await openRoomWithInvite(id, invite);
   } finally {
-    openingRoomId = null;
+    // A slower, superseded open must not clear the flag the newer one set.
+    if (openingRoomId === id) {
+      openingRoomId = null;
+    }
+  }
+  // A stale/superseded open has no room to jump into; the newest watcher run
+  // applies its own ?seq= once it resolves.
+  if (!opened || roomId.value !== id) {
+    return;
   }
   await applySeqQuery();
 }
@@ -1348,6 +1383,7 @@ watch([roomId, inviteCode], async ([next, invite], [previous, previousInvite]) =
     reportVisible.value = false;
     historyVisible.value = false;
     profileVisible.value = false;
+    moreOpen.value = false;
     // The announcement dismissal is restored from storage once the incoming
     // room's summary resolves, so there is nothing to reset here.
     slowModeOverride.value = null;
@@ -1393,7 +1429,7 @@ onUnmounted(() => {
       @touchend="onEdgeTouchEnd"
       @touchcancel="onEdgeTouchEnd"
     >
-      <header class="chat-topbar">
+      <header class="chat-topbar" data-testid="chat-topbar">
         <button class="icon-btn mobile-only" title="房间列表" @click="sidebarOpen = true">
           <Icon name="menu" />
         </button>
@@ -1401,7 +1437,7 @@ onUnmounted(() => {
           {{ roomInitial }}
         </span>
         <div class="chat-title">
-          <h1>{{ room?.name ?? '房间' }}</h1>
+          <h1 data-testid="room-title">{{ room?.name ?? '房间' }}</h1>
           <p class="chat-meta">
             {{ chat.currentOnline.length }} 在线 · {{ chat.currentMembers.length }} 成员
             <span v-if="room?.topic">· {{ room.topic }}</span>
@@ -1418,7 +1454,7 @@ onUnmounted(() => {
         <span class="spacer"></span>
         <button
           v-if="!selectMode"
-          class="btn ghost small select-toggle"
+          class="btn ghost small select-toggle topbar-secondary"
           type="button"
           data-testid="select-mode"
           title="多选消息"
@@ -1429,7 +1465,7 @@ onUnmounted(() => {
           <span class="select-toggle-text">选择</span>
         </button>
         <button
-          class="icon-btn"
+          class="icon-btn topbar-secondary"
           type="button"
           title="媒体库"
           aria-label="媒体库"
@@ -1438,11 +1474,17 @@ onUnmounted(() => {
         >
           <Icon name="copy" />
         </button>
-        <button class="icon-btn" title="置顶消息" aria-label="置顶消息" @click="togglePins">
+        <button
+          class="icon-btn topbar-secondary"
+          type="button"
+          title="置顶消息"
+          aria-label="置顶消息"
+          @click="togglePins"
+        >
           <Icon name="pin" />
         </button>
         <button
-          class="icon-btn"
+          class="icon-btn topbar-secondary"
           type="button"
           title="发起投票"
           aria-label="发起投票"
@@ -1451,23 +1493,55 @@ onUnmounted(() => {
         >
           <Icon name="plus" />
         </button>
-        <button class="icon-btn" title="搜索消息" aria-label="搜索消息" @click="toggleSearch">
+        <button
+          class="icon-btn topbar-search"
+          type="button"
+          title="搜索消息"
+          aria-label="搜索消息"
+          data-testid="search-open"
+          @click="toggleSearch"
+        >
           <Icon name="search" />
         </button>
-        <button class="icon-btn" title="成员" @click="membersOpen = true">
+        <button
+          class="icon-btn topbar-members"
+          type="button"
+          title="成员"
+          aria-label="成员"
+          data-testid="members-open"
+          @click="membersOpen = true"
+        >
           <Icon name="users" />
         </button>
         <button
           v-if="canModerate"
-          class="icon-btn"
+          class="icon-btn topbar-secondary"
+          type="button"
           title="机器人"
           aria-label="机器人"
           @click="botVisible = true"
         >
           <Icon name="bot" />
         </button>
-        <button class="icon-btn" title="房间设置" @click="settingsVisible = true">
+        <button
+          class="icon-btn topbar-secondary"
+          type="button"
+          title="房间设置"
+          aria-label="房间设置"
+          data-testid="settings-open"
+          @click="settingsVisible = true"
+        >
           <Icon name="settings" />
+        </button>
+        <button
+          class="icon-btn topbar-more"
+          type="button"
+          title="更多"
+          aria-label="更多操作"
+          data-testid="more-open"
+          @click="moreOpen = true"
+        >
+          <Icon name="more" />
         </button>
       </header>
 
@@ -1574,6 +1648,22 @@ onUnmounted(() => {
         >
           {{ searchFilterError }}
         </div>
+        <div
+          v-if="searchError"
+          class="search-empty search-filter-error search-failure"
+          role="alert"
+          data-testid="search-error"
+        >
+          <span>{{ searchError }}</span>
+          <button
+            class="btn ghost small"
+            type="button"
+            data-testid="search-retry"
+            @click="retrySearch"
+          >
+            重试
+          </button>
+        </div>
         <div class="room-search-results">
           <button
             v-for="message in searchResults"
@@ -1596,7 +1686,12 @@ onUnmounted(() => {
           </button>
           <div v-if="searching" class="search-empty">搜索中…</div>
           <div
-            v-else-if="searchQuery.trim() && !searchFilterError && !searchResults.length"
+            v-else-if="
+              searchQuery.trim() &&
+              !searchFilterError &&
+              !searchError &&
+              !searchResults.length
+            "
             class="search-empty"
           >
             没有匹配消息
@@ -1646,6 +1741,7 @@ onUnmounted(() => {
           </button>
         </div>
         <MessageList
+          ref="messageListRef"
           :messages="chat.currentMessages"
           :has-more="chat.hasMore[roomId]"
           :loading-older="chat.loadingOlder[roomId]"
@@ -1802,6 +1898,94 @@ onUnmounted(() => {
       </div>
     </el-drawer>
 
+    <Teleport to="body">
+      <div
+        v-if="moreOpen"
+        class="more-overlay"
+        data-testid="more-overlay"
+        @click.self="moreOpen = false"
+      >
+        <div
+          class="more-sheet"
+          role="dialog"
+          aria-modal="true"
+          aria-label="更多操作"
+          data-testid="more-sheet"
+        >
+          <div class="more-sheet-head">
+            <span class="more-sheet-title">更多</span>
+            <button
+              class="icon-btn small-icon"
+              type="button"
+              title="关闭"
+              aria-label="关闭更多操作"
+              @click="moreOpen = false"
+            >
+              <Icon name="close" :size="14" />
+            </button>
+          </div>
+          <div class="more-grid">
+            <button
+              v-if="!selectMode"
+              class="more-item"
+              type="button"
+              data-testid="more-select"
+              @click="moreOpen = false; enterSelectMode()"
+            >
+              <Icon name="check" :size="18" />
+              <span>选择消息</span>
+            </button>
+            <button
+              class="more-item"
+              type="button"
+              data-testid="more-media"
+              @click="moreOpen = false; mediaOpen = true"
+            >
+              <Icon name="copy" :size="18" />
+              <span>媒体库</span>
+            </button>
+            <button
+              class="more-item"
+              type="button"
+              data-testid="more-pins"
+              @click="moreOpen = false; togglePins()"
+            >
+              <Icon name="pin" :size="18" />
+              <span>置顶消息</span>
+            </button>
+            <button
+              class="more-item"
+              type="button"
+              data-testid="more-poll"
+              @click="moreOpen = false; pollVisible = true"
+            >
+              <Icon name="plus" :size="18" />
+              <span>发起投票</span>
+            </button>
+            <button
+              v-if="canModerate"
+              class="more-item"
+              type="button"
+              data-testid="more-bot"
+              @click="moreOpen = false; botVisible = true"
+            >
+              <Icon name="bot" :size="18" />
+              <span>机器人</span>
+            </button>
+            <button
+              class="more-item"
+              type="button"
+              data-testid="more-settings"
+              @click="moreOpen = false; settingsVisible = true"
+            >
+              <Icon name="settings" :size="18" />
+              <span>房间设置</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
     <BotDialog v-model="botVisible" :room-id="roomId" />
     <RoomSettingsDialog v-model="settingsVisible" :room-id="roomId" />
     <MemberProfileDialog v-model="profileVisible" :member="profileMember" />
@@ -1950,6 +2134,115 @@ onUnmounted(() => {
 
 .search-filter-error {
   color: var(--danger);
+}
+
+/* A failed search offers a retry beside the reason; it never doubles as the
+   "no matches" empty state. */
+.search-failure {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* Desktop keeps the full action row; the compact topbar swaps the secondary
+   actions for the sheet below. */
+.topbar-more {
+  display: none;
+}
+
+.more-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  display: flex;
+  align-items: flex-end;
+  background: rgba(21, 23, 15, 0.45);
+}
+
+.more-sheet {
+  width: 100%;
+  max-height: 70vh;
+  overflow-y: auto;
+  padding: 12px 16px calc(20px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line-strong);
+  border-radius: 16px 16px 0 0;
+  background: var(--paper-2);
+  box-shadow: 0 -12px 32px rgba(21, 23, 15, 0.18);
+}
+
+.more-sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.more-sheet-title {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.more-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.more-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 14px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--paper);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.more-item:hover {
+  border-color: var(--ink);
+}
+
+.more-item:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 1px;
+}
+
+/* 390px bar: title + search/members/更多 only. Everything else moves into the
+   bottom sheet, so the bar never scrolls sideways and the room name keeps a
+   readable width. */
+@media (max-width: 640px) {
+  .chat-topbar {
+    gap: 4px;
+    padding: 0 6px;
+    overflow: hidden;
+  }
+
+  .chat-topbar .spacer {
+    display: none;
+  }
+
+  .chat-title {
+    flex: 1 1 auto;
+    overflow: hidden;
+  }
+
+  .topbar-secondary {
+    display: none;
+  }
+
+  .topbar-more {
+    display: inline-flex;
+  }
 }
 
 /* The page action closes the result list; stretching it keeps the whole row

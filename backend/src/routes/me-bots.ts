@@ -1,9 +1,10 @@
 import { Router, type Request } from 'express';
 import { z } from 'zod';
 import { ProviderAuthError, completeOnce } from '../bot/provider';
-import { badRequest, forbidden } from '../errors';
+import { badRequest, forbidden, tooMany } from '../errors';
 import { requireAuth } from '../middleware/auth';
 import { asyncHandler } from '../middleware/error';
+import { checkRate } from '../middleware/ratelimit';
 import {
   assertBotCreateRate,
   createBot,
@@ -42,6 +43,10 @@ const updateSchema = botFields.partial().extend({
 
 const mountSchema = z.object({ botId: z.number().int().positive() });
 
+/** Provider probes are the most expensive per-user action on this router. */
+const TEST_RATE_MAX = 10;
+const TEST_RATE_WINDOW_MS = 60_000;
+
 const router = Router();
 
 router.use(requireAuth);
@@ -69,8 +74,12 @@ router.get(
 router.post(
   '/bots/:id/test',
   asyncHandler(async (req, res) => {
-    const bot = await getBotById(parseId(req.params.id, 'bot'));
+    const botId = parseId(req.params.id, 'bot');
     const user = currentUser(req);
+    if (!(await checkRate(`bot:test:${user.id}`, TEST_RATE_MAX, TEST_RATE_WINDOW_MS))) {
+      throw tooMany('Too many bot test requests');
+    }
+    const bot = await getBotById(botId);
     if (user.role !== 'admin' && bot.ownerUserId !== user.id) {
       throw forbidden('BOT_OWNER_REQUIRED', 'Only the bot owner can test it');
     }

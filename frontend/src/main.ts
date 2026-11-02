@@ -26,7 +26,15 @@ const app = createApp(App);
 const pinia = createPinia();
 app.use(pinia).use(router).use(ElDialog).use(ElDrawer);
 
+// A stalled /auth/me must not keep the whole app off-screen: mount after at
+// most 8s and let fetchMe finish in the background. Its own error handling
+// still flags the session offline / logs out when the response finally lands.
+const BOOT_AUTH_TIMEOUT_MS = 8_000;
 const auth = useAuthStore(pinia);
-auth.fetchMe().finally(() => {
+const { promise: bootTimeout, resolve: bootTimedOut } =
+  Promise.withResolvers<void>();
+const bootTimer = window.setTimeout(bootTimedOut, BOOT_AUTH_TIMEOUT_MS);
+Promise.race([auth.fetchMe().catch(() => undefined), bootTimeout]).finally(() => {
+  window.clearTimeout(bootTimer);
   app.mount('#app');
 });

@@ -3,6 +3,14 @@
 # never collide with a local `docker-compose.dev.yml` stack in the same folder.
 name: bot-for-all-prod
 
+# Every service writes bounded json-file logs; an unbounded default can fill
+# the host disk after a long-running deployment.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 # Production stack: MySQL + Redis + API/Socket.IO server + Nginx (static SPA + proxy).
 #
 #   cp .env.production.example .env.production   # then fill in every value
@@ -15,6 +23,7 @@ services:
   mysql:
     image: mysql:8.4
     restart: unless-stopped
+    logging: *default-logging
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_0900_ai_ci
@@ -43,6 +52,7 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    logging: *default-logging
     command:
       - redis-server
       # No RDB snapshots / AOF: counters are disposable.
@@ -69,6 +79,7 @@ services:
       dockerfile: backend/Dockerfile
     image: bot-for-all-backend:latest
     restart: unless-stopped
+    logging: *default-logging
     env_file:
       # Secrets (JWT_SECRET, BOT_KEY_SECRET, ADMIN_*, optional CORS_ORIGIN).
       # Optional so `docker compose config` still works before the file exists;
@@ -115,6 +126,7 @@ services:
       dockerfile: frontend/Dockerfile
     image: bot-for-all-web:latest
     restart: unless-stopped
+    logging: *default-logging
     ports:
       - "${WEB_PORT:-8080}:80"
     depends_on:

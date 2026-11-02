@@ -272,22 +272,26 @@ watch(
 );
 
 // Jump targets (search/pin) must be mounted even when they predate the window.
-watch(
-  () => props.highlightSeq,
-  async (seq) => {
-    if (!seq) {
-      return;
-    }
-    const index = props.messages.findIndex((message) => message.seq === seq);
-    if (index < 0 || index >= startIndex.value) {
-      return;
-    }
+// The caller awaits this so a jump never queries the DOM before the window has
+// unfolded and the target row exists.
+async function revealMessage(seq: number): Promise<boolean> {
+  const index = props.messages.findIndex((message) => message.seq === seq);
+  if (index < 0) {
+    return false;
+  }
+  if (index < startIndex.value) {
     await revealWindow(index - REVEAL_CONTEXT, 'position');
-    container.value
-      ?.querySelector<HTMLElement>(`[data-seq="${seq}"]`)
-      ?.scrollIntoView({ block: 'center' });
-  },
-);
+  }
+  await nextTick();
+  const element = container.value?.querySelector<HTMLElement>(`[data-seq="${seq}"]`);
+  if (!element) {
+    return false;
+  }
+  element.scrollIntoView({ block: 'center' });
+  return true;
+}
+
+defineExpose({ revealMessage });
 
 // The unread divider lives on the marker message; keep it inside the window.
 watch(
@@ -322,7 +326,13 @@ onMounted(scrollToBottom);
   <div
     ref="container"
     class="message-list"
-    :class="{ 'message-list--dense': dense }"
+    :class="{
+      'message-list--dense': dense,
+      'message-list--jump': showJump,
+    }"
+    tabindex="0"
+    role="log"
+    aria-label="消息列表"
     @scroll.passive="onScroll"
   >
     <button
@@ -388,6 +398,13 @@ onMounted(scrollToBottom);
 </template>
 
 <style scoped>
+/* While the jump pill floats, reserve room below the final row: the sticky
+   pill otherwise sits over the newest message at the bottom of the scroll. */
+.message-list.message-list--jump {
+  padding-bottom: calc(54px + env(safe-area-inset-bottom));
+  scroll-padding-bottom: calc(54px + env(safe-area-inset-bottom));
+}
+
 /* Long histories: offscreen rows cost nothing to lay out or paint. The
    intrinsic size stands in for each row so scroll height stays stable. */
 .message-list--dense .msg {
@@ -427,7 +444,7 @@ onMounted(scrollToBottom);
    outside the viewport. */
 .jump-unread {
   position: sticky;
-  bottom: 52px;
+  bottom: calc(52px + env(safe-area-inset-bottom));
   z-index: 5;
   display: flex;
   align-items: center;

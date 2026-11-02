@@ -2,11 +2,20 @@ import type { Server } from 'socket.io';
 import { safeFetch } from '../bot/safe-fetch';
 import { pool, type ResultSetHeader } from '../db';
 import { logger } from '../logger';
+import { checkRate } from '../middleware/ratelimit';
 import type { MessageDTO, MessagePreview } from '../types';
 import { getMessageById } from './message';
 
 /** Wall-clock budget for a single preview request. */
 const FETCH_TIMEOUT_MS = 3_000;
+/** Attempts per sender per minute; beyond this previews are silently skipped. */
+const RATE_MAX = 20;
+const RATE_WINDOW_MS = 60_000;
+/** Process-wide fetches in flight; a full queue drops new previews silently. */
+const MAX_CONCURRENT = 8;
+
+let activePreviews = 0;
+
 /** Hard cap on the bytes read from the response body (256 KiB). */
 const MAX_BODY_BYTES = 256 * 1024;
 const MAX_TITLE = 255;
@@ -255,10 +264,41 @@ export async function fetchPreview(url: string): Promise<MessagePreview | null> 
   }
 }
 
+/** Fetches and persists one preview; the caller owns the concurrency slot. */
+async function storePreview(
+  io: Server,
+  roomId: number,
+  message: MessageDTO,
+  url: string,
+): Promise<void> {
+  const preview = await fetchPreview(url);
+  if (!preview) {
+    return;
+  }
+
+  // `preview_url IS NULL` keeps a concurrent attach from overwriting the first
+  // result, and the deleted/edited guards drop results for stale content.
+  const [result] = await pool.execute<ResultSetHeader>(
+    `UPDATE messages
+     SET preview_url = ?, preview_title = ?, preview_description = ?, preview_site = ?
+     WHERE id = ? AND deleted_at IS NULL AND preview_url IS NULL`,
+    [preview.url, preview.title, preview.description, preview.site, message.id],
+  );
+  if (result.affectedRows === 0) {
+    return;
+  }
+
+  const updated = await getMessageById(message.id);
+  io.to(`room:${roomId}`).emit('message:updated', { roomId, message: updated });
+}
+
 /**
  * Fetches and stores the preview of the first URL in `message`, then broadcasts
  * the refreshed DTO as `message:updated`. Never throws: a failed fetch leaves
- * the message untouched and is only logged.
+ * the message untouched and is only logged. Both guards (per-sender rate and
+ * process-wide concurrency) drop the preview silently because callers are
+ * fire-and-forget and a message must never fail just because metadata was
+ * skipped.
  */
 export async function attachLinkPreview(
   io: Server,
@@ -273,25 +313,27 @@ export async function attachLinkPreview(
     if (!url) {
       return;
     }
-    const preview = await fetchPreview(url);
-    if (!preview) {
+    if (!(await checkRate(`link-preview:${message.senderId}`, RATE_MAX, RATE_WINDOW_MS))) {
+      logger.debug(
+        { roomId, messageId: message.id, senderId: message.senderId },
+        'link preview rate limited, skipped',
+      );
+      return;
+    }
+    if (activePreviews >= MAX_CONCURRENT) {
+      logger.debug(
+        { roomId, messageId: message.id, activePreviews },
+        'link preview concurrency limit reached, skipped',
+      );
       return;
     }
 
-    // `preview_url IS NULL` keeps a concurrent attach from overwriting the first
-    // result, and the deleted/edited guards drop results for stale content.
-    const [result] = await pool.execute<ResultSetHeader>(
-      `UPDATE messages
-       SET preview_url = ?, preview_title = ?, preview_description = ?, preview_site = ?
-       WHERE id = ? AND deleted_at IS NULL AND preview_url IS NULL`,
-      [preview.url, preview.title, preview.description, preview.site, message.id],
-    );
-    if (result.affectedRows === 0) {
-      return;
+    activePreviews += 1;
+    try {
+      await storePreview(io, roomId, message, url);
+    } finally {
+      activePreviews -= 1;
     }
-
-    const updated = await getMessageById(message.id);
-    io.to(`room:${roomId}`).emit('message:updated', { roomId, message: updated });
   } catch (error) {
     logger.warn({ err: error, roomId, messageId: message.id }, 'link preview attach failed');
   }

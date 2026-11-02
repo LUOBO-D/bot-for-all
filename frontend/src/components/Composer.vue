@@ -1020,6 +1020,9 @@ function onKeydown(event: KeyboardEvent) {
         :key="emoji"
         class="emoji-item"
         type="button"
+        role="option"
+        :aria-selected="false"
+        :aria-label="`插入表情 ${emoji}`"
         @mousedown.prevent="addEmoji(emoji)"
       >
         {{ emoji }}
@@ -1075,16 +1078,41 @@ function onKeydown(event: KeyboardEvent) {
           {{ recordTimerText }}
         </span>
       </button>
-      <button class="composer-tool" type="button" title="加粗" @mousedown.prevent="toggleBold">
+      <button
+        class="composer-tool"
+        type="button"
+        title="加粗"
+        aria-label="加粗"
+        @mousedown.prevent="toggleBold"
+      >
         B
       </button>
-      <button class="composer-tool" type="button" title="行内代码" @mousedown.prevent="toggleCode">
+      <button
+        class="composer-tool"
+        type="button"
+        title="行内代码"
+        aria-label="行内代码"
+        @mousedown.prevent="toggleCode"
+      >
         &lt;/&gt;
       </button>
-      <button class="composer-tool" type="button" title="链接" @mousedown.prevent="insertLink">
+      <button
+        class="composer-tool"
+        type="button"
+        title="链接"
+        aria-label="插入链接"
+        @mousedown.prevent="insertLink"
+      >
         link
       </button>
-      <button class="composer-tool" type="button" title="表情" @mousedown.prevent="toggleEmoji">
+      <button
+        class="composer-tool"
+        type="button"
+        title="表情"
+        aria-label="表情"
+        data-testid="emoji-open"
+        @mousedown.prevent="toggleEmoji"
+      >
         ☺
       </button>
       <button
@@ -1159,6 +1187,7 @@ function onKeydown(event: KeyboardEvent) {
         data-testid="send"
         :disabled="!canSend"
         title="发送"
+        aria-label="发送"
         @click="submit"
       >
         <Icon name="send" :size="18" />

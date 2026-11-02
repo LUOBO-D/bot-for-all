@@ -17,6 +17,20 @@ async function setDisplayName(id: number, displayName: string): Promise<void> {
   await pool.execute('UPDATE users SET display_name = ? WHERE id = ?', [displayName, id]);
 }
 
+async function activeAdminCount(): Promise<number> {
+  const [rows] = await pool.query<RowDataPacket[]>(
+    "SELECT COUNT(*) AS total FROM users WHERE role = 'admin' AND status = 'active'",
+  );
+  return Number(rows[0]?.total ?? 0);
+}
+
+function banUser(token: string, targetId: number) {
+  return request(app)
+    .patch(`/api/admin/users/${targetId}/status`)
+    .set('Authorization', bearer(token))
+    .send({ status: 'banned' });
+}
+
 describe('admin users', () => {
   it('rejects non-admin access to the user list', async () => {
     const user = await createTestUser('plain_user');
@@ -250,6 +264,21 @@ describe('admin users', () => {
       [peer.id],
     );
     expect(rows[0].status).toBe('banned');
+  });
+
+  it('keeps one active admin when two admins ban each other concurrently', async () => {
+    const first = await createTestUser('ban_race_first', 'admin');
+    const second = await createTestUser('ban_race_second', 'admin');
+
+    const responses = await Promise.all([
+      banUser(tokenFor(first), second.id),
+      banUser(tokenFor(second), first.id),
+    ]);
+
+    // Both requests may pass the auth middleware while both admins are active;
+    // the serialized ban check must still refuse the second one.
+    expect(await activeAdminCount()).toBe(1);
+    expect(responses.filter((response) => response.status === 200)).toHaveLength(1);
   });
 
   it('returns 404 for unknown users', async () => {

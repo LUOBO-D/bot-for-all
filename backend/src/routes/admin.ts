@@ -5,10 +5,11 @@ import { config } from '../config';
 import {
   pool,
   withTransaction,
+  type PoolConnection,
   type ResultSetHeader,
   type RowDataPacket,
 } from '../db';
-import { badRequest, notFound, tooMany } from '../errors';
+import { ApiError, badRequest, notFound, tooMany } from '../errors';
 import { logger } from '../logger';
 import { requireAdmin, requireAuth } from '../middleware/auth';
 import { asyncHandler } from '../middleware/error';
@@ -170,6 +171,76 @@ function parseId(value: string, label: string): number {
     throw badRequest('INVALID_ID', `Invalid ${label} id`);
   }
   return id;
+}
+
+/** Named lock shared by process instances; exported for the concurrency test. */
+export const ADMIN_GUARD_LOCK = 'bfa:admin_guard';
+/** How long a request waits for a concurrent admin change before giving up. */
+const ADMIN_GUARD_TIMEOUT_SECONDS = 5;
+
+/**
+ * Runs a role/status mutation under a MySQL named lock. Row locks alone cannot
+ * protect the "last active admin" invariant: two transactions can each read a
+ * different victim before either writes, and both would then pass the count
+ * check. GET_LOCK serializes every instance that talks to this database.
+ *
+ * The lock belongs to the connection, not the transaction, so it is released
+ * explicitly; if that release cannot be confirmed the connection is destroyed
+ * instead of going back to the pool, where it would block every later admin
+ * change until the process exits.
+ */
+async function withAdminGuard<T>(fn: (conn: PoolConnection) => Promise<T>): Promise<T> {
+  const conn = await pool.getConnection();
+  let lockAcquired = false;
+  try {
+    const [lockRows] = await conn.query<RowDataPacket[]>(
+      'SELECT GET_LOCK(?, ?) AS acquired',
+      [ADMIN_GUARD_LOCK, ADMIN_GUARD_TIMEOUT_SECONDS],
+    );
+    lockAcquired = Number(lockRows[0]?.acquired) === 1;
+    if (!lockAcquired) {
+      throw new ApiError(
+        503,
+        'ADMIN_BUSY',
+        'Another admin change is in progress, please retry',
+      );
+    }
+
+    try {
+      await conn.beginTransaction();
+      const result = await fn(conn);
+      await conn.commit();
+      return result;
+    } catch (error) {
+      try {
+        await conn.rollback();
+      } catch {
+        // ignore rollback failure
+      }
+      throw error;
+    }
+  } finally {
+    let reusable = true;
+    if (lockAcquired) {
+      let released = false;
+      try {
+        const [releaseRows] = await conn.query<RowDataPacket[]>(
+          'SELECT RELEASE_LOCK(?) AS released',
+          [ADMIN_GUARD_LOCK],
+        );
+        released = Number(releaseRows[0]?.released) === 1;
+      } catch {
+        released = false;
+      }
+      if (!released) {
+        reusable = false;
+        conn.destroy();
+      }
+    }
+    if (reusable) {
+      conn.release();
+    }
+  }
 }
 
 /**
@@ -1430,67 +1501,72 @@ router.patch(
       throw badRequest('INVALID_INPUT', 'status must be active or banned');
     }
     const userId = parseId(req.params.id, 'user');
-    const [targetRows] = await pool.query<RowDataPacket[]>(
-      'SELECT type, role, status FROM users WHERE id = ?',
-      [userId],
-    );
-    const target = targetRows[0];
-    if (!target) {
-      throw notFound('USER_NOT_FOUND', 'User not found');
-    }
-    if (target.type === 'bot') {
-      throw badRequest(
-        'BOT_STATUS_UNSUPPORTED',
-        'Bot accounts cannot be banned through this endpoint',
+    const nextStatus = parsed.data.status;
+    const actorId = currentUser(req).id;
+
+    // The read, the last-admin check and the write share one serialized
+    // transaction, so a concurrent ban/demotion cannot invalidate the count
+    // between the check and the update.
+    const target = await withAdminGuard(async (conn) => {
+      const [targetRows] = await conn.query<RowDataPacket[]>(
+        'SELECT type, role, status FROM users WHERE id = ? FOR UPDATE',
+        [userId],
       );
-    }
-    const isSelf = userId === currentUser(req).id;
-    if (
-      parsed.data.status === 'banned' &&
-      target.role === 'admin' &&
-      target.status === 'active'
-    ) {
-      const [adminRows] = await pool.query<RowDataPacket[]>(
-        "SELECT COUNT(*) AS total FROM users WHERE role = 'admin' AND status = 'active'",
-      );
-      if (Number(adminRows[0]?.total ?? 0) <= 1) {
-        throw badRequest('LAST_ADMIN', 'Cannot ban the last active admin');
+      const row = targetRows[0];
+      if (!row) {
+        throw notFound('USER_NOT_FOUND', 'User not found');
       }
-    }
-    if (isSelf) {
-      throw badRequest('CANNOT_BAN_SELF', 'Cannot change your own status');
-    }
-    await withTransaction(async (conn) => {
+      if (row.type === 'bot') {
+        throw badRequest(
+          'BOT_STATUS_UNSUPPORTED',
+          'Bot accounts cannot be banned through this endpoint',
+        );
+      }
+      if (nextStatus === 'banned' && row.role === 'admin' && row.status === 'active') {
+        // `FOR UPDATE` locks every active admin row, so a concurrent mutation
+        // waits and then counts the committed state instead of its own copy.
+        const [adminRows] = await conn.query<RowDataPacket[]>(
+          "SELECT id FROM users WHERE role = 'admin' AND status = 'active' FOR UPDATE",
+        );
+        if (adminRows.length <= 1) {
+          throw badRequest('LAST_ADMIN', 'Cannot ban the last active admin');
+        }
+      }
+      if (userId === actorId) {
+        throw badRequest('CANNOT_BAN_SELF', 'Cannot change your own status');
+      }
       await conn.execute<ResultSetHeader>(
         `UPDATE users
             SET token_version = token_version + IF(status <> 'banned' AND ? = 'banned', 1, 0),
                 status = ?
           WHERE id = ?`,
-        [parsed.data.status, parsed.data.status, userId],
+        [nextStatus, nextStatus, userId],
       );
-      if (parsed.data.status === 'banned') {
+      if (nextStatus === 'banned') {
         // A banned owner loses every room bot they own, not just the ones in
         // rooms they happen to be present in right now.
         await disableRoomBotsOwnedBy(userId, undefined, conn);
         // Every queued message is withdrawn with the account.
         await cancelPendingScheduledMessages(userId, undefined, conn);
       }
+      return row;
     });
-    if (parsed.data.status === 'banned') {
+
+    if (nextStatus === 'banned') {
       bumpBotCache();
     }
     // The status change is committed; a session that was open before the ban
     // must lose its socket even though its handshake already succeeded. Done
     // before the audit write so a failed audit cannot keep it alive.
-    if (parsed.data.status === 'banned') {
+    if (nextStatus === 'banned') {
       await disconnectUserSockets(userId, 'banned');
     }
     await recordAudit({
-      actorId: currentUser(req).id,
+      actorId,
       action: 'user.status',
       targetType: 'user',
       targetId: userId,
-      detail: { from: target.status, to: parsed.data.status },
+      detail: { from: String(target.status), to: nextStatus },
     });
     res.json({ ok: true });
   }),
@@ -1504,42 +1580,49 @@ router.patch(
       throw badRequest('INVALID_INPUT', 'role must be admin or user');
     }
     const userId = parseId(req.params.id, 'user');
-    const [targetRows] = await pool.query<RowDataPacket[]>(
-      'SELECT type, role, status FROM users WHERE id = ?',
-      [userId],
-    );
-    const target = targetRows[0];
-    if (!target) {
-      throw notFound('USER_NOT_FOUND', 'User not found');
-    }
-    if (target.type === 'bot') {
-      throw badRequest('INVALID_TARGET', 'Bot accounts cannot hold a user role');
-    }
     const nextRole: 'admin' | 'user' = parsed.data.role;
-    // Only demoting an active admin can empty the admin pool; banning an admin
-    // is guarded the same way in PATCH /users/:id/status, and the guard runs
-    // before the self check there too, so the sole admin sees the real reason.
-    if (nextRole === 'user' && target.role === 'admin' && target.status === 'active') {
-      const [adminRows] = await pool.query<RowDataPacket[]>(
-        "SELECT COUNT(*) AS total FROM users WHERE role = 'admin' AND status = 'active'",
+    const actorId = currentUser(req).id;
+
+    const target = await withAdminGuard(async (conn) => {
+      const [targetRows] = await conn.query<RowDataPacket[]>(
+        'SELECT type, role, status FROM users WHERE id = ? FOR UPDATE',
+        [userId],
       );
-      if (Number(adminRows[0]?.total ?? 0) <= 1) {
-        throw badRequest('LAST_ADMIN', 'Cannot demote the last active admin');
+      const row = targetRows[0];
+      if (!row) {
+        throw notFound('USER_NOT_FOUND', 'User not found');
       }
-    }
-    if (userId === currentUser(req).id) {
-      throw badRequest('CANNOT_CHANGE_SELF_ROLE', 'Cannot change your own role');
-    }
-    await pool.execute<ResultSetHeader>('UPDATE users SET role = ? WHERE id = ?', [
-      nextRole,
-      userId,
-    ]);
+      if (row.type === 'bot') {
+        throw badRequest('INVALID_TARGET', 'Bot accounts cannot hold a user role');
+      }
+      // Only demoting an active admin can empty the admin pool; banning an
+      // admin is guarded the same way in PATCH /users/:id/status, and the guard
+      // runs before the self check there too, so the sole admin sees the real
+      // reason. Locking every active admin row makes a concurrent demotion wait
+      // and then count the committed state.
+      if (nextRole === 'user' && row.role === 'admin' && row.status === 'active') {
+        const [adminRows] = await conn.query<RowDataPacket[]>(
+          "SELECT id FROM users WHERE role = 'admin' AND status = 'active' FOR UPDATE",
+        );
+        if (adminRows.length <= 1) {
+          throw badRequest('LAST_ADMIN', 'Cannot demote the last active admin');
+        }
+      }
+      if (userId === actorId) {
+        throw badRequest('CANNOT_CHANGE_SELF_ROLE', 'Cannot change your own role');
+      }
+      await conn.execute<ResultSetHeader>('UPDATE users SET role = ? WHERE id = ?', [
+        nextRole,
+        userId,
+      ]);
+      return row;
+    });
     await recordAudit({
-      actorId: currentUser(req).id,
+      actorId,
       action: 'user.role',
       targetType: 'user',
       targetId: userId,
-      detail: { from: target.role, to: nextRole },
+      detail: { from: String(target.role), to: nextRole },
     });
     const user = await loadAdminUser(userId);
     if (!user) {

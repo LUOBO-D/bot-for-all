@@ -1,4 +1,4 @@
-import { pool, type RowDataPacket } from '../db';
+import { pool, withTransaction, type RowDataPacket } from '../db';
 import { badRequest } from '../errors';
 
 export const NOTIFY_MODES = ['all', 'mention'] as const;
@@ -67,43 +67,57 @@ function assertDndWindow(start: string | null, end: string | null): void {
  * `INSERT IGNORE` keeps the read cheap and race-free: concurrent first reads all
  * succeed and the existing row is never overwritten.
  */
-export async function getSettings(userId: number): Promise<UserSettings> {
+async function ensureSettingsRow(userId: number): Promise<void> {
+  // Committed before any row lock is taken. Doing this inside the update
+  // transaction would make concurrent first writes all hold a shared
+  // duplicate-key lock and then upgrade to SELECT ... FOR UPDATE, which
+  // InnoDB reports as a deadlock.
   await pool.execute(
     `INSERT IGNORE INTO user_settings (user_id, notify_mode) VALUES (?, 'all')`,
     [userId],
   );
+}
+
+export async function getSettings(userId: number): Promise<UserSettings> {
+  await ensureSettingsRow(userId);
   const [rows] = await pool.query<RowDataPacket[]>(SETTINGS_SELECT, [userId]);
   return mapSettings(rows[0]);
 }
 
 /**
- * Merges the patch onto the stored settings and upserts the whole row, so the
- * response is always the complete DTO. Omitted fields keep their old value;
- * `null` on a DND end clears it, and the pair is validated as merged — sending
- * only `dndStart` to a user who had no window is rejected.
+ * Merges the patch onto the stored settings, so the response is always the
+ * complete DTO. Omitted fields keep their old value; `null` on a DND end
+ * clears it, and the pair is validated as merged — sending only `dndStart` to
+ * a user who had no window is rejected.
+ *
+ * The row is created if needed and read `FOR UPDATE` inside a transaction:
+ * two concurrent patches (say, notification mode and DND) then serialize, and
+ * the second merges onto the first one's committed values instead of
+ * overwriting the whole row with a stale copy.
  */
 export async function updateSettings(
   userId: number,
   input: UpdateSettingsInput,
 ): Promise<UserSettings> {
-  const current = await getSettings(userId);
-  const notifyMode = input.notifyMode ?? current.notifyMode;
-  const dndStart = input.dndStart === undefined ? current.dndStart : input.dndStart;
-  const dndEnd = input.dndEnd === undefined ? current.dndEnd : input.dndEnd;
-  const dndAllowMentions = input.dndAllowMentions ?? current.dndAllowMentions;
+  await ensureSettingsRow(userId);
+  return withTransaction(async (conn) => {
+    const [rows] = await conn.query<RowDataPacket[]>(`${SETTINGS_SELECT} FOR UPDATE`, [
+      userId,
+    ]);
+    const current = mapSettings(rows[0]);
+    const notifyMode = input.notifyMode ?? current.notifyMode;
+    const dndStart = input.dndStart === undefined ? current.dndStart : input.dndStart;
+    const dndEnd = input.dndEnd === undefined ? current.dndEnd : input.dndEnd;
+    const dndAllowMentions = input.dndAllowMentions ?? current.dndAllowMentions;
 
-  assertDndWindow(dndStart, dndEnd);
+    assertDndWindow(dndStart, dndEnd);
 
-  await pool.execute(
-    `INSERT INTO user_settings (user_id, notify_mode, dnd_start, dnd_end, dnd_allow_mentions)
-     VALUES (?, ?, ?, ?, ?)
-     ON DUPLICATE KEY UPDATE
-       notify_mode = VALUES(notify_mode),
-       dnd_start = VALUES(dnd_start),
-       dnd_end = VALUES(dnd_end),
-       dnd_allow_mentions = VALUES(dnd_allow_mentions)`,
-    [userId, notifyMode, dndStart, dndEnd, dndAllowMentions ? 1 : 0],
-  );
-  const [rows] = await pool.query<RowDataPacket[]>(SETTINGS_SELECT, [userId]);
-  return mapSettings(rows[0]);
+    await conn.execute(
+      `UPDATE user_settings
+          SET notify_mode = ?, dnd_start = ?, dnd_end = ?, dnd_allow_mentions = ?
+        WHERE user_id = ?`,
+      [notifyMode, dndStart, dndEnd, dndAllowMentions ? 1 : 0, userId],
+    );
+    return { notifyMode, dndStart, dndEnd, dndAllowMentions };
+  });
 }

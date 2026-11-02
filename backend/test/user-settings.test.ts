@@ -2,6 +2,7 @@ import request from 'supertest';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../src/app';
 import { pool, type RowDataPacket } from '../src/db';
+import { getSettings, updateSettings } from '../src/services/settings';
 import { createTestUser, tokenFor } from './helpers';
 
 const app = createApp();
@@ -199,6 +200,27 @@ describe('user settings', () => {
     expect(response.body.error.code).toBe('INVALID_INPUT');
     // Validation happens before the lazy default row would be created.
     expect(await settingsRowCount(user.id)).toBe(0);
+  });
+
+  it('merges concurrent patches instead of overwriting the whole row', async () => {
+    const user = await createTestUser('settings_concurrent');
+
+    // Half the writers change only the notification mode, half only the DND
+    // window. Without the row lock each one writes a full row built from its
+    // own stale read, so one of the two fields is lost.
+    await Promise.all([
+      ...Array.from({ length: 4 }, () => updateSettings(user.id, { notifyMode: 'mention' })),
+      ...Array.from({ length: 4 }, () =>
+        updateSettings(user.id, { dndStart: '22:00', dndEnd: '07:00', dndAllowMentions: false }),
+      ),
+    ]);
+
+    expect(await getSettings(user.id)).toEqual({
+      notifyMode: 'mention',
+      dndStart: '22:00',
+      dndEnd: '07:00',
+      dndAllowMentions: false,
+    });
   });
 
   it('isolates settings between users', async () => {

@@ -1,11 +1,21 @@
 import axios from 'axios';
 
-const http = axios.create({ baseURL: '/api' });
+// Every JSON call gets a hard ceiling so a stalled request cannot pin the UI
+// (the boot /auth/me path has its own, shorter guard in main.ts). Uploads are
+// the exception: a multi-megabyte body legitimately takes longer than a small
+// API call, so the request interceptor lifts the ceiling for multipart bodies.
+const DEFAULT_TIMEOUT_MS = 30_000;
+const UPLOAD_TIMEOUT_MS = 120_000;
+
+const http = axios.create({ baseURL: '/api', timeout: DEFAULT_TIMEOUT_MS });
 
 http.interceptors.request.use((config) => {
   const token = localStorage.getItem('bfa_token');
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
+  }
+  if (typeof FormData !== 'undefined' && config.data instanceof FormData) {
+    config.timeout = UPLOAD_TIMEOUT_MS;
   }
   return config;
 });

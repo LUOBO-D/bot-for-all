@@ -1,6 +1,22 @@
 import { Redis, type RedisOptions } from 'ioredis';
 import { logger } from './logger';
 
+/** Longest reconnect delay; every later attempt keeps using this delay. */
+export const REDIS_RETRY_MAX_MS = 2_000;
+
+/** Budget for the very first connect, after which a feature uses memory. */
+export const REDIS_INITIAL_CONNECT_TIMEOUT_MS = 3_000;
+
+/**
+ * Reconnect delay after a failed attempt. This deliberately never returns
+ * `null`: giving up would leave a feature on in-process state forever after a
+ * runtime outage, while an unbounded retry lets it heal as soon as Redis is
+ * reachable again.
+ */
+export function redisRetryDelay(attempt: number): number {
+  return Math.min(attempt * 200, REDIS_RETRY_MAX_MS);
+}
+
 /**
  * Options shared by every optional Redis backend (rate limit, presence,
  * captcha): connect lazily, fail fast, and never queue commands while the link
@@ -11,10 +27,25 @@ const CLIENT_OPTIONS: RedisOptions = {
   connectTimeout: 2_000,
   maxRetriesPerRequest: 1,
   enableOfflineQueue: false,
-  // A dropped connection is retried for ~18s before the client gives up;
-  // meanwhile every caller keeps serving from memory.
-  retryStrategy: (attempt) => (attempt > 10 ? null : Math.min(attempt * 200, 2_000)),
+  retryStrategy: redisRetryDelay,
 };
+
+/** How often one outage may write a connection-error warning. */
+const ERROR_LOG_INTERVAL_MS = 30_000;
+
+/** Races `connect()` against the startup budget without leaking the timer. */
+export async function connectWithTimeout(client: Redis, timeoutMs: number): Promise<void> {
+  const { promise: timedOut, reject } = Promise.withResolvers<never>();
+  const timer = setTimeout(
+    () => reject(new Error(`redis connect timed out after ${timeoutMs}ms`)),
+    timeoutMs,
+  );
+  try {
+    await Promise.race([client.connect(), timedOut]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /** The slice of a client needed to shut it down; narrowed for test fakes. */
 export interface ClosableRedis {
@@ -27,13 +58,27 @@ export interface ClosableRedis {
  * when the server is unreachable, so startup never depends on Redis.
  */
 export async function connectRedis(url: string, label: string): Promise<Redis | null> {
+  let lastErrorLogAt = 0;
   const onConnectionError = (error: Error): void => {
+    // A permanently unreachable Redis keeps retrying forever, so log at most
+    // one warning per interval instead of once per attempt.
+    const now = Date.now();
+    if (now - lastErrorLogAt < ERROR_LOG_INTERVAL_MS) {
+      return;
+    }
+    lastErrorLogAt = now;
     logger.warn({ err: error }, `redis ${label} connection error`);
   };
   const client = new Redis(url, CLIENT_OPTIONS);
   client.on('error', onConnectionError);
+  // A recovered link gets a fresh logging budget for the next outage.
+  client.on('ready', () => {
+    lastErrorLogAt = 0;
+  });
   try {
-    await client.connect();
+    // Startup stays bounded even though the client itself retries forever:
+    // only a runtime drop after a successful connect benefits from that.
+    await connectWithTimeout(client, REDIS_INITIAL_CONNECT_TIMEOUT_MS);
     logger.info(`redis ${label} backend enabled`);
     return client;
   } catch (error) {

@@ -2,7 +2,8 @@ import request from 'supertest';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../src/app';
 import { pool, type RowDataPacket } from '../src/db';
-import { createTestUser, tokenFor } from './helpers';
+import { ADMIN_GUARD_LOCK } from '../src/routes/admin';
+import { createTestUser, delay, tokenFor } from './helpers';
 import type { AuthUser } from '../src/types';
 
 const app = createApp();
@@ -37,6 +38,13 @@ async function roleOf(userId: number): Promise<string | null> {
     [userId],
   );
   return rows[0] ? String(rows[0].role) : null;
+}
+
+async function activeAdminCount(): Promise<number> {
+  const [rows] = await pool.query<RowDataPacket[]>(
+    "SELECT COUNT(*) AS total FROM users WHERE role = 'admin' AND status = 'active'",
+  );
+  return Number(rows[0]?.total ?? 0);
 }
 
 describe('admin user role', () => {
@@ -166,5 +174,60 @@ describe('admin user role', () => {
     expect(response.status).toBe(403);
     expect(response.body.error.code).toBe('ADMIN_REQUIRED');
     expect(await roleOf(target.id)).toBe('user');
+  });
+
+  it('waits for the shared admin lock before demoting', async () => {
+    const actor = await createTestUser('role_lock_actor', 'admin');
+    const target = await createTestUser('role_lock_target', 'admin');
+    const conn = await pool.getConnection();
+    try {
+      const [lockRows] = await conn.query<RowDataPacket[]>(
+        'SELECT GET_LOCK(?, 5) AS acquired',
+        [ADMIN_GUARD_LOCK],
+      );
+      expect(Number(lockRows[0]?.acquired)).toBe(1);
+
+      let settled = false;
+      const pending = patchRole(actor, target.id, 'user').then((response) => {
+        settled = true;
+        return response;
+      });
+
+      // The request blocks on a MySQL named lock, which fake timers cannot
+      // drive; a short real wait is the only way to observe contention.
+      await delay(300);
+      expect(settled).toBe(false);
+      expect(await roleOf(target.id)).toBe('admin');
+
+      await conn.query('SELECT RELEASE_LOCK(?)', [ADMIN_GUARD_LOCK]);
+      const response = await pending;
+
+      expect(response.status).toBe(200);
+      expect(await roleOf(target.id)).toBe('user');
+    } finally {
+      await conn.query('SELECT RELEASE_LOCK(?)', [ADMIN_GUARD_LOCK]).catch(() => undefined);
+      conn.release();
+    }
+  });
+
+  it('keeps one active admin when two admins demote each other concurrently', async () => {
+    const first = await createTestUser('role_race_first', 'admin');
+    const second = await createTestUser('role_race_second', 'admin');
+
+    const responses = await Promise.all([
+      patchRole(first, second.id, 'user'),
+      patchRole(second, first.id, 'user'),
+    ]);
+
+    // Without serialization both requests count two admins and both commit,
+    // leaving the platform with zero active admins.
+    expect(await activeAdminCount()).toBe(1);
+    expect(responses.filter((response) => response.status === 200)).toHaveLength(1);
+    expect(
+      responses.some(
+        (response) =>
+          response.status === 400 && response.body.error.code === 'LAST_ADMIN',
+      ) || responses.some((response) => response.status === 403),
+    ).toBe(true);
   });
 });

@@ -1,8 +1,10 @@
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import type { Server } from 'socket.io';
 import type { Socket } from 'socket.io-client';
-import { extractFirstUrl, fetchPreview } from '../src/services/link-preview';
+import { config } from '../src/config';
+import { attachLinkPreview, extractFirstUrl, fetchPreview } from '../src/services/link-preview';
 import type { MessageDTO } from '../src/types';
 import {
   connectClient,
@@ -36,13 +38,26 @@ const OG_HTML = `<!DOCTYPE html>
 interface PreviewServer {
   origin: string;
   requests: string[];
+  maxActive: () => number;
   close: () => Promise<void>;
 }
 
 async function startPreviewServer(): Promise<PreviewServer> {
   const requests: string[] = [];
+  let active = 0;
+  let maxActive = 0;
   const server = http.createServer((req, res) => {
     requests.push(req.url ?? '');
+    if ((req.url ?? '').startsWith('/slow')) {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      setTimeout(() => {
+        active -= 1;
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+        res.end('<html><head><title>slow page</title></head></html>');
+      }, 150);
+      return;
+    }
     if (req.url === '/og') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       res.end(OG_HTML);
@@ -68,6 +83,7 @@ async function startPreviewServer(): Promise<PreviewServer> {
   return {
     origin: `http://127.0.0.1:${port}`,
     requests,
+    maxActive: () => maxActive,
     close: async () => {
       const { promise, resolve } = Promise.withResolvers<void>();
       server.close(() => resolve());
@@ -149,6 +165,100 @@ describe('fetchPreview', () => {
 
   it('refuses cloud metadata addresses', async () => {
     expect(await fetchPreview('http://169.254.169.254/latest/meta-data/')).toBeNull();
+  });
+});
+
+const silentIo = {
+  to: () => ({ emit: () => undefined }),
+} as unknown as Server;
+
+function previewMessage(messageId: number, senderId: number, content: string): MessageDTO {
+  return {
+    id: messageId,
+    seq: messageId,
+    roomId: 1,
+    senderId,
+    senderType: 'user',
+    senderName: 'preview-test',
+    senderAvatar: null,
+    content,
+    kind: 'text',
+    poll: null,
+    attachments: [],
+    status: 'done',
+    replyToId: null,
+    createdAt: new Date().toISOString(),
+    editedAt: null,
+    deleted: false,
+    pinned: false,
+    pinnedBy: null,
+    forwardedFrom: null,
+    preview: null,
+    reactions: [],
+  };
+}
+
+describe('preview limits', () => {
+  it('drops fetches above the global concurrency cap and frees slots', async () => {
+    const user = await createTestUser(`lp-cap-${Date.now().toString(36)}`);
+    const before = previewServer.requests.length;
+
+    await Promise.all(
+      Array.from({ length: 12 }, (_, index) =>
+        attachLinkPreview(
+          silentIo,
+          1,
+          previewMessage(
+            800_000 + index,
+            user.id,
+            `${previewServer.origin}/slow?i=${index}`,
+          ),
+        ),
+      ),
+    );
+
+    // Eight slots are all in use at once; the other four never reach the page.
+    expect(previewServer.maxActive()).toBe(8);
+    expect(previewServer.requests.length - before).toBe(8);
+
+    // The finally block released the slots after the slow responses finished.
+    await attachLinkPreview(
+      silentIo,
+      1,
+      previewMessage(800_099, user.id, `${previewServer.origin}/slow?after=1`),
+    );
+    expect(previewServer.requests.length - before).toBe(9);
+  });
+
+  it('skips a sender after 20 preview attempts per minute', async () => {
+    const previous = config.rateLimitEnabled;
+    config.rateLimitEnabled = true;
+    try {
+      const user = await createTestUser(`lp-rate-${Date.now().toString(36)}`);
+      const other = await createTestUser(`lp-rate-other-${Date.now().toString(36)}`);
+      const before = previewServer.requests.length;
+
+      for (let index = 0; index < 21; index += 1) {
+        await attachLinkPreview(
+          silentIo,
+          1,
+          previewMessage(810_000 + index, user.id, `${previewServer.origin}/og`),
+        );
+      }
+
+      // The 21st attempt is dropped silently, before any fetch.
+      expect(previewServer.requests.length - before).toBe(20);
+
+      // Another sender keeps its own budget.
+      await attachLinkPreview(
+        silentIo,
+        1,
+        previewMessage(810_099, other.id, `${previewServer.origin}/og`),
+      );
+      expect(previewServer.requests.length - before).toBe(21);
+    } finally {
+      config.rateLimitEnabled = previous;
+    }
   });
 });
 
