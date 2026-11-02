@@ -91,8 +91,14 @@ describe('safeLookup', () => {
   it('allows loopback when private bot URLs are enabled', async () => {
     config.allowPrivateBotUrls = true;
 
-    await expect(resolveOne('localhost')).resolves.toEqual({ address: '127.0.0.1', family: 4 });
-    await expect(resolveAll('localhost')).resolves.toEqual(['127.0.0.1']);
+    const one = await resolveOne('localhost');
+    // CI 的 /etc/hosts 可能把 localhost 解析成 ::1；两者都是合法 loopback。
+    expect(['127.0.0.1', '::1']).toContain(one.address);
+    expect(one.family).toBe(one.address === '::1' ? 6 : 4);
+
+    const all = await resolveAll('localhost');
+    expect(all.length).toBeGreaterThan(0);
+    expect(all.every((address) => address === '127.0.0.1' || address === '::1')).toBe(true);
   });
 
   it('refuses metadata addresses even when private bot URLs are enabled', async () => {
