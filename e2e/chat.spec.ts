@@ -2610,6 +2610,7 @@ test('jumps to the unread divider', async ({ browser }) => {
 });
 
 test('exports personal data as JSON and ZIP', async ({ browser }) => {
+  test.setTimeout(90_000);
   const suffix = Date.now().toString().slice(-8);
   const username = `e2e_export_${suffix}`;
   const roomName = `export-room-${suffix}`;
@@ -2647,9 +2648,18 @@ test('exports personal data as JSON and ZIP', async ({ browser }) => {
     page.locator('.el-message').filter({ hasText: '已导出个人数据' }),
   ).toBeVisible();
 
+  // A slow blob (large export / attachment) must outlive the 30s JSON
+  // timeout. Delay only the ZIP response, then verify the download completes.
+  await page.route('**/api/me/export**', async (route) => {
+    if (route.request().url().includes('format=zip')) {
+      await new Promise((resolve) => setTimeout(resolve, 31_000));
+    }
+    await route.continue();
+  });
   const zipPromise = page.waitForEvent('download');
   await profile.getByTestId('me-export-zip').click();
   const zip = await zipPromise;
+  await page.unroute('**/api/me/export**');
   expect(zip.suggestedFilename()).toMatch(/^me-export-\d+\.zip$/);
   const zipPath = await zip.path();
   if (zipPath === null) {

@@ -6,6 +6,9 @@ import axios from 'axios';
 // API call, so the request interceptor lifts the ceiling for multipart bodies.
 const DEFAULT_TIMEOUT_MS = 30_000;
 const UPLOAD_TIMEOUT_MS = 120_000;
+// Blob responses include attachments and large JSON/ZIP/CSV exports; a slow
+// link can legitimately take far longer than a small JSON request.
+const BLOB_TIMEOUT_MS = 120_000;
 
 const http = axios.create({ baseURL: '/api', timeout: DEFAULT_TIMEOUT_MS });
 
@@ -16,6 +19,8 @@ http.interceptors.request.use((config) => {
   }
   if (typeof FormData !== 'undefined' && config.data instanceof FormData) {
     config.timeout = UPLOAD_TIMEOUT_MS;
+  } else if (config.responseType === 'blob') {
+    config.timeout = BLOB_TIMEOUT_MS;
   }
   return config;
 });
