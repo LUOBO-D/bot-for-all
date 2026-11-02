@@ -18,6 +18,9 @@ export default defineConfig({
         'pnpm --filter backend e2e:reset && pnpm --filter backend migrate && pnpm --filter backend seed:admin && pnpm --filter backend dev',
       url: 'http://127.0.0.1:3000/api/health',
       reuseExistingServer: false,
+      timeout: 120_000,
+      stdout: 'pipe',
+      stderr: 'pipe',
       env: {
         CAPTCHA_ENABLED: 'false',
         RATE_LIMIT_ENABLED: 'false',
@@ -34,6 +37,8 @@ export default defineConfig({
       command: 'pnpm --filter frontend exec vite --port 5174 --strictPort',
       url: 'http://127.0.0.1:5174',
       reuseExistingServer: false,
+      stdout: 'pipe',
+      stderr: 'pipe',
     },
     {
       command: 'pnpm --filter backend fake:openai',
