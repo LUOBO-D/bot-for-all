@@ -84,7 +84,7 @@ describe('bot CRUD', () => {
     );
   });
 
-  it('forbids an admin from editing or disabling another owner’s bot', async () => {
+  it('lets a global admin manage another owner’s room bot', async () => {
     const admin = await createTestUser('perm_admin', 'admin');
     const owner = await createTestUser('perm_owner');
     const roomId = await createTestRoom(owner);
@@ -98,33 +98,36 @@ describe('bot CRUD', () => {
       model: 'fake-ok',
     });
 
-    await expect(updateBot(bot.userId, admin, { name: 'hijacked' })).rejects.toMatchObject({
-      code: 'BOT_OWNER_REQUIRED',
+    // Room bots are managed by the room owner or a global admin; the bot's
+    // owner row alone does not grant rights.
+    const updated = await updateBot(bot.userId, admin, {
+      name: 'admin-renamed',
+      model: 'fake-alt',
     });
-    await expect(disableBot(bot.userId, admin)).rejects.toMatchObject({
-      code: 'BOT_OWNER_REQUIRED',
-    });
+    expect(updated.name).toBe('admin-renamed');
+    expect(updated.model).toBe('fake-alt');
 
     const patch = await request(createApp())
       .patch(`/api/me/bots/${bot.userId}`)
       .set('Authorization', `Bearer ${tokenFor(admin)}`)
       .send({ model: 'hijacked' });
-    expect(patch.status).toBe(403);
-    expect(patch.body.error.code).toBe('BOT_OWNER_REQUIRED');
+    expect(patch.status).toBe(200);
+    expect(patch.body.bot.model).toBe('hijacked');
 
     const removal = await request(createApp())
       .delete(`/api/me/bots/${bot.userId}`)
       .set('Authorization', `Bearer ${tokenFor(admin)}`);
-    expect(removal.status).toBe(403);
+    expect(removal.status).toBe(200);
+    expect(removal.body.disabled).toBe(true);
 
     // Mount/unmount stays an admin privilege.
     await mountBot(roomId, bot.userId, admin);
     await unmountBot(roomId, bot.userId, admin);
 
-    const unchanged = await getBotById(bot.userId);
-    expect(unchanged.name).toBe('perm-bot');
-    expect(unchanged.model).toBe('fake-ok');
-    expect(unchanged.enabled).toBe(true);
+    const disabled = await getBotById(bot.userId);
+    expect(disabled.name).toBe('admin-renamed');
+    expect(disabled.model).toBe('hijacked');
+    expect(disabled.enabled).toBe(false);
   });
 
   it('keeps listing bots when one row has corrupt ciphertext', async () => {
@@ -211,5 +214,82 @@ describe('bot CRUD', () => {
 
     await updateBot(bot.userId, admin, { enabled: true });
     expect((await getBotsForRoom(roomId)).map((item) => item.userId)).toContain(bot.userId);
+  });
+
+  it('keeps global bot mounts when disabled through update', async () => {
+    const admin = await createTestUser('global_patch_admin', 'admin');
+    const owner = await createTestUser('global_patch_owner');
+    const roomId = await createTestRoom(owner);
+    const bot = await createBot({
+      actor: admin,
+      scope: 'global',
+      name: 'global-patch',
+      baseUrl: 'http://127.0.0.1:4010',
+      apiKey: 'test-key',
+      model: 'fake-ok',
+    });
+    await mountBot(roomId, bot.userId, owner);
+
+    await updateBot(bot.userId, admin, { enabled: false });
+
+    const [mounted] = await pool.query<RowDataPacket[]>(
+      'SELECT 1 FROM room_members WHERE room_id = ? AND user_id = ?',
+      [roomId, bot.userId],
+    );
+    expect(mounted).toHaveLength(1);
+    expect((await getBotsForRoom(roomId)).map((item) => item.userId)).not.toContain(bot.userId);
+
+    await updateBot(bot.userId, admin, { enabled: true });
+    expect((await getBotsForRoom(roomId)).map((item) => item.userId)).toContain(bot.userId);
+  });
+
+  it('keeps room bot memberships when a room bot is re-enabled', async () => {
+    const owner = await createTestUser('room_patch_owner');
+    const roomId = await createTestRoom(owner);
+    const bot = await createBot({
+      actor: owner,
+      scope: 'room',
+      roomId,
+      name: 'room-patch',
+      baseUrl: 'http://127.0.0.1:4010',
+      apiKey: 'test-key',
+      model: 'fake-ok',
+    });
+
+    await updateBot(bot.userId, owner, { enabled: false });
+    const [removed] = await pool.query<RowDataPacket[]>(
+      'SELECT 1 FROM room_members WHERE room_id = ? AND user_id = ?',
+      [roomId, bot.userId],
+    );
+    expect(removed).toHaveLength(0);
+
+    await updateBot(bot.userId, owner, { enabled: true });
+    const [restored] = await pool.query<RowDataPacket[]>(
+      'SELECT 1 FROM room_members WHERE room_id = ? AND user_id = ?',
+      [roomId, bot.userId],
+    );
+    expect(restored).toHaveLength(1);
+  });
+
+  it('saves a key that literally contains the mask marker', async () => {
+    const owner = await createTestUser('mask_owner');
+    const roomId = await createTestRoom(owner);
+    const bot = await createBot({
+      actor: owner,
+      scope: 'room',
+      roomId,
+      name: 'mask-bot',
+      baseUrl: 'http://127.0.0.1:4010',
+      apiKey: 'original-key',
+      model: 'fake-ok',
+    });
+
+    const updated = await updateBot(bot.userId, owner, { apiKey: 'sk-live***key' });
+    expect(updated.apiKey).toBe('sk-live***key');
+
+    const unchanged = await updateBot(bot.userId, owner, {
+      apiKey: toBotDto(updated).apiKeyMasked,
+    });
+    expect(unchanged.apiKey).toBe('sk-live***key');
   });
 });

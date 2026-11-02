@@ -55,6 +55,7 @@ async function submit() {
         <input
           v-model="username"
           data-testid="username"
+          aria-label="用户名"
           placeholder="用户名"
           autocomplete="username"
         />
@@ -62,6 +63,7 @@ async function submit() {
           v-model="password"
           data-testid="password"
           type="password"
+          aria-label="密码"
           placeholder="密码"
           autocomplete="current-password"
         />

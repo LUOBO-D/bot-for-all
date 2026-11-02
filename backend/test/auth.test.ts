@@ -1,6 +1,8 @@
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../src/app';
+import { config } from '../src/config';
+import { normalizeLoginUsername } from '../src/routes/auth';
 import { createTestUser, tokenFor } from './helpers';
 
 const app = createApp();
@@ -60,5 +62,37 @@ describe('auth', () => {
 
     expect(response.status).toBe(200);
     expect(response.body.user.displayName).toBe('新名字');
+  });
+
+  it('folds case and accent into one login rate-limit bucket', async () => {
+    expect(normalizeLoginUsername('Élodie')).toBe('elodie');
+    expect(normalizeLoginUsername('E\u0301LODIE')).toBe('elodie');
+    expect(normalizeLoginUsername(' security_admin ')).toBe(' security_admin ');
+
+    await createTestUser('login_norm_Élodie');
+    const variants = [
+      'login_norm_Élodie',
+      'LOGIN_NORM_ELODIE',
+      'login_norm_élodie',
+      'Login_Norm_E\u0301lodie',
+    ];
+    config.rateLimitEnabled = true;
+    try {
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        const response = await request(app)
+          .post('/api/auth/login')
+          .send({ username: variants[attempt % variants.length], password: 'definitely-wrong' });
+        expect(response.status).toBe(401);
+      }
+      // A different spelling still shares the bucket, so the 11th fails on the
+      // limiter instead of buying another ten guesses.
+      const limited = await request(app)
+        .post('/api/auth/login')
+        .send({ username: 'LOGIN_NORM_E\u0301LODIE', password: 'definitely-wrong' });
+      expect(limited.status).toBe(400);
+      expect(limited.body.error.code).toBe('RATE_LIMITED');
+    } finally {
+      config.rateLimitEnabled = false;
+    }
   });
 });

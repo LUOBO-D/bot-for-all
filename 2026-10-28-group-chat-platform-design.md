@@ -219,7 +219,23 @@ REST 只覆盖配置与历史读取；**不存在**全平台消息批量导出�
 
 ## 10. 部署
 
-Docker Compose 一把梭：`nginx + node-app + mysql + redis`。Nginx 负责 HTTPS（Let's Encrypt）、静态资源、WS 反代（`proxy_read_timeout` 调大防心跳间隔外断连）。前端构建产物由 Nginx 直接托管。
+单机 Docker Compose 一把梭，三个服务，MySQL 不进公网（`docker-compose.prod.yml`）：
+
+| 服务 | 镜像 | 职责 |
+|---|---|---|
+| `web` | `frontend/Dockerfile`（nginx:alpine） | 托管 Vite 构建产物；`/api/`、`/socket.io/` 反代到 `backend:3000`；gzip + 基础安全头；SPA fallback |
+| `backend` | `backend/Dockerfile`（node:24-slim + pnpm） | 启动时先跑迁移再起服务；`/api/health` 作为健康检查；镜像内带 `db/migrations` |
+| `mysql` | `mysql:8.4` | 持久卷 `mysql-data`，只在内部 `data` 网络可达，不映射宿主端口 |
+
+- 对外只发布 `web` 的 `${WEB_PORT:-8080}:80`；`backend` 与 `mysql` 不发布端口。`edge` 网络走 `web ↔ backend`，`data` 网络走 `backend ↔ mysql`。
+- 生产默认值写死在 compose 里，不依赖开发者本机的 `.env`：`NODE_ENV=production`、`TRUST_PROXY=1`（一跳反代）、`ALLOW_PRIVATE_BOT_URLS=false`（机器人 baseUrl 不能指向 loopback/内网）。
+- 密钥只走 `.env.production`（`env_file`）与进程环境：不写进镜像、不写进 compose；`.dockerignore` 排除 `.env*`，只保留 `*.example`。`MYSQL_ROOT_PASSWORD` 由 Compose 插值进 `DATABASE_URL`，因此只接受 hex。
+- 迁移在容器启动命令里执行（`node dist/migrate.js && exec node dist/index.js`）；`GET_LOCK('bfa_migrate')` 保证并发启动时只有一个实例真正跑迁移。`exec` 让 node 成为 PID 1，`docker stop` 能触发优雅停机。
+- 管理员不自动创建：部署后手动执行一次 `node dist/scripts/seed-admin.js`（幂等，改密码重跑即同步）。
+- Nginx 侧：`/socket.io/` 带 `Upgrade`/`Connection` 头且 `proxy_read_timeout 300s`（大于 Socket.IO 25s 心跳 + 20s pingTimeout），避免长连接被反代掐断；静态资源 `expires 30d`，`index.html` 不缓存。
+- HTTPS 由外层终结（云 LB 或再加一层 Caddy/Nginx），透传 `X-Forwarded-For` / `X-Forwarded-Proto`；证书续期不在本层处理。
+- 更新：`docker compose --env-file .env.production -f docker-compose.prod.yml up -d --build`；数据只在 `down -v` 时删除。compose 项目名固定为 `bot-for-all-prod`，与本地 dev 栈的容器/网络/数据卷互不干扰。
+- 本期不引入 Redis：单实例下在线状态、限流游标、机器人队列都在进程内，多实例时按 §5 换 Redis Adapter。
 
 ## 11. 预算
 

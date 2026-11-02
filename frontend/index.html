@@ -2,11 +2,43 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f6f4ec" />
+    <script>
+      // Paint the correct theme before first render: no light flash in dark mode.
+      (function () {
+        var mode = 'system';
+        try {
+          mode = localStorage.getItem('bfa_theme') || 'system';
+        } catch (e) {
+          /* storage blocked — treat as system */
+        }
+        var theme =
+          mode === 'light' || mode === 'dark'
+            ? mode
+            : window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+              ? 'dark'
+              : 'light';
+        var root = document.documentElement;
+        root.dataset.theme = theme;
+        root.style.colorScheme = theme;
+        var meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) meta.setAttribute('content', theme === 'dark' ? '#15170f' : '#f6f4ec');
+      })();
+    </script>
+    <meta name="color-scheme" content="light dark" />
+    <style>
+      #boot{position:fixed;inset:0;display:flex;flex-direction:column;gap:14px;align-items:center;justify-content:center;background:#f6f4ec;color:#15170f;font:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif}
+      #boot .mark{width:34px;height:34px;border-radius:8px;background:#c9e83a;animation:boot-pulse 1.1s ease-in-out infinite}
+      #boot p{margin:0;font-size:13px;letter-spacing:.28em;color:#6b6854}
+      html[data-theme='dark'] #boot{background:#15170f;color:#f6f4ec}
+      html[data-theme='dark'] #boot p{color:#9c9885}
+      @keyframes boot-pulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(.86);opacity:.72}}
+    </style>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>bot-for-all</title>
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app"><div id="boot"><div class="mark"></div><p>BOT-FOR-ALL</p></div></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

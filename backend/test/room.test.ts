@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createMessage } from '../src/services/message';
+import { createMessage, deleteMessage } from '../src/services/message';
 import {
   createRoom,
   getRoomSummary,
@@ -9,7 +9,10 @@ import {
   updateReadCursor,
   updateRoom,
 } from '../src/services/room';
-import { createTestUser } from './helpers';
+import { createTestUser, tokenFor } from './helpers';
+import request from 'supertest';
+import { createApp } from '../src/app';
+import { config } from '../src/config';
 
 describe('rooms', () => {
   it('creates private rooms with invite codes and enforces them', async () => {
@@ -102,5 +105,75 @@ describe('rooms', () => {
     const list = await listRooms(member.id);
     const summary = list.mine.find((item) => item.id === room.id);
     expect(summary?.unreadCount).toBe(1);
+  });
+
+  it('excludes own and recalled messages from unread', async () => {
+    const owner = await createTestUser('unread2_owner');
+    const member = await createTestUser('unread2_member');
+    const room = await createRoom(owner.id, { name: 'unread2', isPublic: true });
+    await joinRoom(member.id, room.id);
+
+    const first = await createMessage({
+      roomId: room.id,
+      senderId: owner.id,
+      senderType: 'user',
+      content: 'other',
+      clientMsgId: 'unread2-1',
+    });
+    const own = await createMessage({
+      roomId: room.id,
+      senderId: member.id,
+      senderType: 'user',
+      content: 'mine',
+      clientMsgId: 'unread2-2',
+    });
+    const recalled = await createMessage({
+      roomId: room.id,
+      senderId: owner.id,
+      senderType: 'user',
+      content: 'gone',
+      clientMsgId: 'unread2-3',
+    });
+    await deleteMessage(room.id, recalled.seq, owner.id, true);
+    void first;
+    void own;
+    const list = await listRooms(member.id);
+    const summary = list.mine.find((item) => item.id === room.id);
+    // seq1 other unread; seq2 own excluded; seq3 recalled excluded.
+    expect(summary?.unreadCount).toBe(1);
+  });
+
+  it('does not rate-limit members re-joining, but limits outsiders', async () => {
+    config.rateLimitEnabled = true;
+    try {
+      const app = createApp();
+      const owner = await createTestUser('rejoin_owner');
+      const room = await createRoom(owner.id, { name: 'rejoin', isPublic: true });
+      const headers = { Authorization: `Bearer ${tokenFor(owner)}` };
+      for (let i = 0; i < 8; i += 1) {
+        const res = await request(app).post(`/api/rooms/${room.id}/join`).set(headers).send({});
+        expect(res.status).toBe(200);
+      }
+      const privateRoom = await createRoom(owner.id, { name: 'rejoin-private', isPublic: false });
+      const outsider = await createTestUser('rejoin_outsider');
+      const outsiderHeaders = { Authorization: `Bearer ${tokenFor(outsider)}` };
+      let limited = 0;
+      let rejected = 0;
+      for (let i = 0; i < 8; i += 1) {
+        const res = await request(app)
+          .post(`/api/rooms/${privateRoom.id}/join`)
+          .set(outsiderHeaders)
+          .send({});
+        if (res.status === 429) {
+          limited += 1;
+        } else if (res.status === 403) {
+          rejected += 1;
+        }
+      }
+      expect(rejected).toBeGreaterThan(0);
+      expect(limited).toBeGreaterThan(0);
+    } finally {
+      config.rateLimitEnabled = false;
+    }
   });
 });

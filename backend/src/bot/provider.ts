@@ -1,5 +1,6 @@
 import { config } from '../config';
-import { SseParser } from './sse';
+import { safeFetch } from './safe-fetch';
+import { responseTooLargeError, SseParser } from './sse';
 import { assertSafeBotUrl } from './url';
 
 export interface ChatMessage {
@@ -70,6 +71,9 @@ function requestInit(options: StreamOptions, stream: boolean, signal: AbortSigna
     },
     body: JSON.stringify(requestBody(options, stream)),
     signal,
+    // Never let undici follow redirects on its own: a validated base URL
+    // could 302 to a metadata/internal address. Hops are re-validated below.
+    redirect: 'manual',
   };
 }
 
@@ -111,16 +115,47 @@ function extractDeltaContent(value: unknown): string | null {
   return typeof delta.content === 'string' ? delta.content : null;
 }
 
+const MAX_REDIRECT_HOPS = 3;
+
 async function request(
   options: StreamOptions,
   stream: boolean,
   signal: AbortSignal,
 ): Promise<Response> {
   await assertSafeBotUrl(options.baseUrl);
-  try {
-    return await fetch(endpointFor(options.baseUrl), requestInit(options, stream, signal));
-  } catch (error) {
-    throw normalizeFetchError(error);
+  let url = endpointFor(options.baseUrl);
+  for (let hop = 0; ; hop += 1) {
+    let response: Response;
+    try {
+      // `safeFetch` validates every resolved address at connect time, so a
+      // rebinding host cannot swap in an internal address after the URL check.
+      response = await safeFetch(url, requestInit(options, stream, signal));
+    } catch (error) {
+      throw normalizeFetchError(error);
+    }
+    const location = response.headers.get('location');
+    if (!location) {
+      return response;
+    }
+    // Only 307/308 preserve POST + body; anything else is refused rather
+    // than silently downgraded to GET.
+    if (response.status !== 307 && response.status !== 308) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new ProviderError(`Bot provider returned unsupported redirect (${response.status})`);
+    }
+    if (hop >= MAX_REDIRECT_HOPS) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new ProviderError('Bot provider redirected too many times');
+    }
+    const next = new URL(location, url).toString();
+    try {
+      await assertSafeBotUrl(next);
+    } catch {
+      await response.body?.cancel().catch(() => undefined);
+      throw new ProviderError(`Bot redirect target rejected: ${next}`);
+    }
+    await response.body?.cancel().catch(() => undefined);
+    url = next;
   }
 }
 
@@ -134,9 +169,82 @@ function normalizeFetchError(error: unknown): Error {
   return new ProviderError(String(error));
 }
 
+/**
+ * Reads at most `limit` bytes from a response body. The cap is enforced on the
+ * bytes actually handed over by the reader, never on `Content-Length` (which a
+ * hostile provider can lie about or omit). Crossing the cap cancels the reader
+ * so the socket is torn down instead of draining the rest.
+ */
+async function readCappedText(response: Response, limit: number): Promise<string> {
+  const reader = response.body?.getReader();
+  if (!reader) {
+    return '';
+  }
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      total += value.byteLength;
+      if (total > limit) {
+        await reader.cancel().catch(() => undefined);
+        throw responseTooLargeError(`Bot provider response exceeds ${limit} bytes`);
+      }
+      chunks.push(value);
+    }
+  } catch (error) {
+    // Aborts, malformed reads and the cap itself all release the connection.
+    await reader.cancel().catch(() => undefined);
+    throw error;
+  }
+  return new TextDecoder('utf-8').decode(Buffer.concat(chunks, total));
+}
+
+/**
+ * Turns a successful non-stream body into reply text. JSON is the normal
+ * shape, but a plain-text body is accepted as-is; an invalid JSON content type
+ * is a provider error rather than silently empty content.
+ */
+async function readSuccessBody(response: Response): Promise<string> {
+  const contentType = response.headers.get('content-type') ?? '';
+  const text = await readCappedText(response, config.botMaxResponseBytes);
+  if (text.trim() === '') {
+    return '';
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    if (
+      contentType.includes('json') ||
+      text.trimStart().startsWith('{') ||
+      text.trimStart().startsWith('[')
+    ) {
+      throw new ProviderError('Provider returned invalid JSON');
+    }
+    return text;
+  }
+  return extractNonStreamContent(parsed);
+}
+
+/**
+ * Reads an error body under the same cap, returning a short excerpt for the
+ * callers that report it. A body that crosses the cap is itself a response-size
+ * failure, so the caller never buffers it.
+ */
+async function readErrorBody(response: Response): Promise<string> {
+  const text = await readCappedText(response, config.botMaxResponseBytes);
+  return text.slice(0, 200);
+}
+
 async function readNonStream(options: StreamOptions, signal: AbortSignal): Promise<string> {
   const response = await request(options, false, signal);
   if (!response.ok) {
+    // Read (and therefore cap) the error body before classifying the status.
+    await readErrorBody(response);
     if (response.status === 401 || response.status === 403) {
       throw new ProviderAuthError(`Provider auth failed (${response.status})`, response.status);
     }
@@ -145,8 +253,7 @@ async function readNonStream(options: StreamOptions, signal: AbortSignal): Promi
     }
     throw new ProviderError(`Provider error ${response.status}`, response.status);
   }
-  const json: unknown = await response.json();
-  return extractNonStreamContent(json);
+  return readSuccessBody(response);
 }
 
 export async function completeOnce(options: StreamOptions): Promise<string> {
@@ -162,7 +269,7 @@ export async function* streamChat(options: StreamOptions): AsyncGenerator<string
   const response = await request(options, true, signal);
 
   if (!response.ok) {
-    const text = await response.text().catch(() => '');
+    const text = await readErrorBody(response);
     if (response.status === 401 || response.status === 403) {
       throw new ProviderAuthError(`Provider auth failed (${response.status})`, response.status);
     }
@@ -173,16 +280,12 @@ export async function* streamChat(options: StreamOptions): AsyncGenerator<string
       yield await readNonStream(options, signal);
       return;
     }
-    throw new ProviderError(
-      `Provider error ${response.status}: ${text.slice(0, 200)}`,
-      response.status,
-    );
+    throw new ProviderError(`Provider error ${response.status}: ${text}`, response.status);
   }
 
   const contentType = response.headers.get('content-type') ?? '';
   if (!contentType.includes('text/event-stream')) {
-    const json: unknown = await response.json();
-    yield extractNonStreamContent(json);
+    yield await readSuccessBody(response);
     return;
   }
 
@@ -192,7 +295,10 @@ export async function* streamChat(options: StreamOptions): AsyncGenerator<string
   }
 
   const decoder = new TextDecoder('utf-8');
-  const parser = new SseParser();
+  const parser = new SseParser({
+    maxBufferBytes: config.botMaxSseEventBytes,
+    maxEventBytes: config.botMaxSseEventBytes,
+  });
 
   const emit = (payload: string): string | null => {
     if (payload === '[DONE]') {
@@ -207,33 +313,48 @@ export async function* streamChat(options: StreamOptions): AsyncGenerator<string
     return extractDeltaContent(parsed);
   };
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) {
-      break;
-    }
-    const chunk = decoder.decode(value, { stream: true });
-    for (const payload of parser.feed(chunk)) {
-      if (payload === '[DONE]') {
-        return;
+  // Counted on raw bytes actually read from the socket, so SSE framing,
+  // comments and ignored events all consume the same budget.
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
       }
-      const text = emit(payload);
-      if (text) {
-        yield text;
+      totalBytes += value.byteLength;
+      if (totalBytes > config.botMaxResponseBytes) {
+        throw responseTooLargeError(
+          `Bot provider response exceeds ${config.botMaxResponseBytes} bytes`,
+        );
+      }
+      const chunk = decoder.decode(value, { stream: true });
+      for (const payload of parser.feed(chunk)) {
+        if (payload === '[DONE]') {
+          return;
+        }
+        const text = emit(payload);
+        if (text) {
+          yield text;
+        }
       }
     }
-  }
 
-  const tail = decoder.decode();
-  if (tail) {
-    for (const payload of parser.feed(tail)) {
-      if (payload === '[DONE]') {
-        return;
-      }
-      const text = emit(payload);
-      if (text) {
-        yield text;
+    const tail = decoder.decode();
+    if (tail) {
+      for (const payload of parser.feed(tail)) {
+        if (payload === '[DONE]') {
+          return;
+        }
+        const text = emit(payload);
+        if (text) {
+          yield text;
+        }
       }
     }
+  } finally {
+    // Also runs on [DONE]/consumer return, releasing the socket promptly
+    // instead of waiting for the provider to close an idle stream.
+    await reader.cancel().catch(() => undefined);
   }
 }

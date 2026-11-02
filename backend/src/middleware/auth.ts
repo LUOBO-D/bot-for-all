@@ -7,7 +7,7 @@ import type { AuthUser } from '../types';
 export async function getUserFromToken(token: string): Promise<AuthUser> {
   const payload = verifyToken(token);
   const [rows] = await pool.query<RowDataPacket[]>(
-    `SELECT id, username, display_name, avatar, type, role, status
+    `SELECT id, username, display_name, avatar, type, role, status, token_version
      FROM users WHERE id = ?`,
     [Number(payload.sub)],
   );
@@ -15,8 +15,18 @@ export async function getUserFromToken(token: string): Promise<AuthUser> {
   if (!row) {
     throw unauthorized('User not found');
   }
+  const tokenVersion = Number(row.token_version);
+  // A ban is reported as 403 whether or not the token was issued before it:
+  // banning also bumps the version, and callers must see the account state
+  // rather than a generic revocation. The version check below then turns the
+  // same token into 401 once the account is unbanned.
   if (row.status === 'banned') {
     throw forbidden('BANNED', 'User is banned');
+  }
+  // Anything that invalidates sessions (a password change, "log out everywhere") bumps the
+  // stored counter, so a token signed with an older version is dead on arrival.
+  if (payload.ver !== tokenVersion) {
+    throw unauthorized('Token has been revoked');
   }
   return {
     id: Number(row.id),
@@ -26,6 +36,7 @@ export async function getUserFromToken(token: string): Promise<AuthUser> {
     type: row.type,
     role: row.role,
     status: row.status,
+    tokenVersion,
   };
 }
 

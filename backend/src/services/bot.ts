@@ -1,7 +1,16 @@
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
-import { pool, withTransaction, type ResultSetHeader, type RowDataPacket } from '../db';
-import { ApiError, badRequest, forbidden, notFound } from '../errors';
+import { config } from '../config';
+import {
+  pool,
+  withTransaction,
+  type PoolConnection,
+  type ResultSetHeader,
+  type RowDataPacket,
+} from '../db';
+import { ApiError, badRequest, forbidden, notFound, tooMany } from '../errors';
+import { logger } from '../logger';
+import { checkRate } from '../middleware/ratelimit';
 import { getRoomOwnerId } from './room';
 import type { AuthUser, BotDTO, BotRow } from '../types';
 import { isDuplicateError, toIso } from '../utils';
@@ -29,9 +38,10 @@ function mapBotRow(row: RowDataPacket): BotRow {
   let apiKey: string;
   try {
     apiKey = decryptSecret(encrypted);
-  } catch {
+  } catch (error) {
     // A single corrupt ciphertext (rotated BOT_KEY_SECRET, manual edit) must not
     // break every bot listing; the row keeps working, only the key is unreadable.
+    logger.warn({ err: error, botUserId: Number(row.user_id) }, 'failed to decrypt bot api key');
     apiKey = '';
   }
   return {
@@ -86,12 +96,30 @@ export async function listGlobalBots(): Promise<BotRow[]> {
 }
 
 export async function getBotsForRoom(roomId: number): Promise<BotRow[]> {
+  // A room bot is only live while its user account is active, its membership
+  // row exists, and its owner still belongs to the room. The owner check is
+  // deliberately scoped to room bots: a global bot may be mounted in rooms its
+  // owner never joined.
   const [rows] = await pool.query<RowDataPacket[]>(
     `${BOT_SELECT}
      JOIN room_members rm ON rm.user_id = b.user_id
      WHERE rm.room_id = ? AND rm.role = 'bot' AND b.enabled = 1
-     ORDER BY b.created_at ASC`,
-    [roomId],
+       AND u.status = 'active'
+       AND (
+         b.scope = 'global' OR (
+           b.room_id = rm.room_id AND EXISTS (
+             SELECT 1
+             FROM room_members owner_rm
+             JOIN users owner_u ON owner_u.id = owner_rm.user_id
+             WHERE owner_rm.room_id = b.room_id
+               AND owner_rm.user_id = b.owner_user_id
+               AND owner_u.status = 'active'
+           )
+         )
+       )
+     ORDER BY b.created_at ASC
+     LIMIT ?`,
+    [roomId, config.botMaxPerRoom],
   );
   return rows.map(mapBotRow);
 }
@@ -109,6 +137,66 @@ export interface CreateBotInput {
   temperature?: number;
   maxTokens?: number;
   extraBody?: Record<string, unknown> | null;
+}
+
+/** Per-user creation attempts allowed in any rolling minute. */
+export const BOT_CREATE_RATE_MAX = 10;
+export const BOT_CREATE_RATE_WINDOW_MS = 60_000;
+
+/**
+ * Shared by `POST /api/me/bots` and the admin global-bot endpoint so an admin
+ * cannot dodge the limit by switching routes, and a user's two kinds of bot
+ * creation draw from one bucket.
+ */
+export async function assertBotCreateRate(userId: number): Promise<void> {
+  if (!(await checkRate(`bot:create:${userId}`, BOT_CREATE_RATE_MAX, BOT_CREATE_RATE_WINDOW_MS))) {
+    throw tooMany('Too many bot creation requests');
+  }
+}
+
+/**
+ * Enforces both row quotas inside the creating transaction. The room row (for
+ * room bots) and the owner row are locked first, room before user to match the
+ * existing membership/leave transactions, so concurrent creations for the same
+ * owner/room serialize and each counts the committed rows instead of all
+ * passing the check and inserting. Rows are counted regardless of `enabled`:
+ * disabling is a soft delete, and counting only live rows would let
+ * create/disable cycles grow storage (and later re-enables bypass the cap).
+ */
+async function assertBotQuota(
+  conn: PoolConnection,
+  ownerId: number,
+  scope: 'room' | 'global',
+  roomId: number | null,
+): Promise<void> {
+  if (scope === 'room' && roomId !== null) {
+    await conn.execute<RowDataPacket[]>('SELECT id FROM rooms WHERE id = ? FOR UPDATE', [roomId]);
+  }
+  await conn.execute<RowDataPacket[]>('SELECT id FROM users WHERE id = ? FOR UPDATE', [ownerId]);
+
+  const [ownerRows] = await conn.execute<RowDataPacket[]>(
+    'SELECT COUNT(*) AS total FROM bots WHERE owner_user_id = ?',
+    [ownerId],
+  );
+  if (Number(ownerRows[0]?.total ?? 0) >= config.botMaxPerOwner) {
+    throw badRequest(
+      'BOT_LIMIT_REACHED',
+      `You already own the maximum of ${config.botMaxPerOwner} bots`,
+    );
+  }
+
+  if (scope === 'room' && roomId !== null) {
+    const [roomRows] = await conn.execute<RowDataPacket[]>(
+      "SELECT COUNT(*) AS total FROM bots WHERE scope = 'room' AND room_id = ?",
+      [roomId],
+    );
+    if (Number(roomRows[0]?.total ?? 0) >= config.botMaxPerRoom) {
+      throw badRequest(
+        'BOT_LIMIT_REACHED',
+        `This room already has the maximum of ${config.botMaxPerRoom} bots`,
+      );
+    }
+  }
 }
 
 export async function createBot(input: CreateBotInput): Promise<BotRow> {
@@ -133,6 +221,7 @@ export async function createBot(input: CreateBotInput): Promise<BotRow> {
     const username = `bot_${randomBytes(4).toString('hex')}`;
     try {
       const botUserId = await withTransaction(async (conn) => {
+        await assertBotQuota(conn, input.actor.id, input.scope, input.roomId ?? null);
         const [userResult] = await conn.execute<ResultSetHeader>(
           `INSERT INTO users (username, password_hash, display_name, type, role, status)
            VALUES (?, ?, ?, 'bot', 'user', 'active')`,
@@ -192,15 +281,34 @@ export interface UpdateBotInput {
   enabled?: boolean;
 }
 
+/**
+ * Management rights never come from the bot's owner row alone for room bots:
+ * they belong to the room, so only the room's current owner or a global admin
+ * may change them. Global bots keep the bot-owner rule.
+ */
+async function assertCanManageBot(bot: BotRow, actor: AuthUser): Promise<void> {
+  if (bot.scope === 'room') {
+    if (actor.role === 'admin') {
+      return;
+    }
+    const ownerId = bot.roomId === null ? null : await getRoomOwnerId(bot.roomId);
+    if (ownerId !== actor.id) {
+      throw forbidden('ROOM_OWNER_REQUIRED', 'Only the room owner can manage this bot');
+    }
+    return;
+  }
+  if (bot.ownerUserId !== actor.id) {
+    throw forbidden('BOT_OWNER_REQUIRED', 'Only the bot owner can manage it');
+  }
+}
+
 export async function updateBot(
   botId: number,
   actor: AuthUser,
   patch: UpdateBotInput,
 ): Promise<BotRow> {
   const current = await getBotById(botId);
-  if (current.ownerUserId !== actor.id) {
-    throw forbidden('BOT_OWNER_REQUIRED', 'Only the bot owner can update it');
-  }
+  await assertCanManageBot(current, actor);
   if (patch.baseUrl !== undefined) {
     await assertSafeBotUrl(patch.baseUrl);
   }
@@ -215,7 +323,11 @@ export async function updateBot(
       sets.push('base_url = ?');
       params.push(patch.baseUrl);
     }
-    if (patch.apiKey !== undefined && patch.apiKey !== '' && !patch.apiKey.includes('***')) {
+    if (
+      patch.apiKey !== undefined &&
+      patch.apiKey !== '' &&
+      patch.apiKey !== maskKey(current.apiKey)
+    ) {
       sets.push('api_key_encrypted = ?');
       params.push(encryptSecret(patch.apiKey));
     }
@@ -259,7 +371,9 @@ export async function updateBot(
         [current.roomId, botId, 'bot'],
       );
     }
-    if (patch.enabled === false) {
+    if (patch.enabled === false && current.scope === 'room') {
+      // Mirrors disableBot: room bots lose their single membership, global bots
+      // keep their mounts so re-enabling restores the previous rooms.
       await conn.execute('DELETE FROM room_members WHERE user_id = ?', [botId]);
     }
   });
@@ -270,9 +384,7 @@ export async function updateBot(
 
 export async function disableBot(botId: number, actor: AuthUser): Promise<void> {
   const current = await getBotById(botId);
-  if (current.ownerUserId !== actor.id) {
-    throw forbidden('BOT_OWNER_REQUIRED', 'Only the bot owner can disable it');
-  }
+  await assertCanManageBot(current, actor);
   await withTransaction(async (conn) => {
     await conn.execute('UPDATE bots SET enabled = 0 WHERE user_id = ?', [botId]);
     // Room bots belong to exactly one room; global bots must keep their mounts

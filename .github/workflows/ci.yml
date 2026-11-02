@@ -1,0 +1,105 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Backend tests, frontend build, e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      # Backend vitest reads these from vitest.config.ts, but the e2e webServer
+      # (backend `dev` spawned by Playwright) inherits this job env, so every
+      # value the server validates at boot must be present here.
+      DATABASE_URL: mysql://root:devroot@127.0.0.1:3306/chat_test
+      # JWT_SECRET / BOT_KEY_SECRET are generated per run in a later step.
+      CAPTCHA_ENABLED: 'false'
+      RATE_LIMIT_ENABLED: 'false'
+      # e2e bots point at the fake OpenAI server on 127.0.0.1:4010.
+      ALLOW_PRIVATE_BOT_URLS: 'true'
+
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: devroot
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -p$MYSQL_ROOT_PASSWORD"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-start-period=20s
+          --health-retries=12
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.22.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate ephemeral test secrets
+        run: |
+          echo "JWT_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "BOT_KEY_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+
+      - name: Backend tests
+        timeout-minutes: 15
+        run: pnpm --filter backend test
+
+      - name: Frontend build
+        timeout-minutes: 10
+        run: pnpm --filter frontend build
+
+      - name: Install Playwright Chromium
+        timeout-minutes: 15
+        run: pnpm exec playwright install --with-deps chromium
+
+      # Playwright's webServer runs `migrate` against chat_e2e, which fails
+      # unless the database already exists. The backend package owns mysql2,
+      # so run the snippet through it and reuse the job DATABASE_URL for creds.
+      - name: Create e2e database
+        run: |
+          pnpm --filter backend exec node -e '
+          const mysql = require("mysql2/promise");
+          const url = new URL(process.env.DATABASE_URL);
+          (async () => {
+            const conn = await mysql.createConnection({
+              host: url.hostname,
+              port: Number(url.port || 3306),
+              user: decodeURIComponent(url.username),
+              password: decodeURIComponent(url.password),
+            });
+            await conn.query(
+              "CREATE DATABASE IF NOT EXISTS chat_e2e CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci",
+            );
+            await conn.end();
+            console.log("chat_e2e ready");
+          })().catch((error) => {
+            console.error(error);
+            process.exit(1);
+          });
+          '
+
+      - name: End-to-end tests
+        timeout-minutes: 20
+        run: pnpm test:e2e

@@ -8,6 +8,8 @@ export interface TokenPayload extends JwtPayload {
   username: string;
   type: UserType;
   role: UserRole;
+  /** Revocation counter the token was signed with; see `AuthUser.tokenVersion`. */
+  ver: number;
 }
 
 export function signToken(user: AuthUser): string {
@@ -17,6 +19,7 @@ export function signToken(user: AuthUser): string {
       username: user.username,
       type: user.type,
       role: user.role,
+      ver: user.tokenVersion,
     },
     config.jwtSecret,
     { expiresIn: '7d', algorithm: 'HS256' },
@@ -29,7 +32,11 @@ export function verifyToken(token: string): TokenPayload {
     if (typeof decoded === 'string' || !decoded.sub) {
       throw new Error('invalid payload');
     }
-    return decoded as TokenPayload;
+    const payload = decoded as TokenPayload;
+    // Tokens minted before the revocation counter existed have no claim; they
+    // count as version 0, the same value every row started with.
+    payload.ver = typeof payload.ver === 'number' ? payload.ver : 0;
+    return payload;
   } catch {
     throw unauthorized('Invalid or expired token');
   }

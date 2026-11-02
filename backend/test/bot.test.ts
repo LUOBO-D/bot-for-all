@@ -211,6 +211,40 @@ describe('bot gateway', () => {
     fixture.client.close();
   });
 
+  it('follows same-host 307 redirects', async () => {
+    const fixture = await setupBot('fake-ok');
+    const reply = await completeOnce({
+      baseUrl: fixture.bot.baseUrl,
+      apiKey: 'test-key',
+      model: 'fake-redirect',
+      messages: [{ role: 'user', content: 'ping' }],
+      temperature: 0,
+      maxTokens: 16,
+    });
+    expect(reply).toBe('重定向后回复');
+
+    fixture.client.close();
+  });
+
+  it('rejects redirects to metadata hosts and redirect loops', async () => {
+    const fixture = await setupBot('fake-ok');
+    const options = {
+      baseUrl: fixture.bot.baseUrl,
+      apiKey: 'test-key',
+      messages: [{ role: 'user', content: 'ping' }],
+      temperature: 0,
+      maxTokens: 16,
+    };
+    await expect(completeOnce({ ...options, model: 'fake-redirect-evil' })).rejects.toThrow(
+      /redirect target rejected/,
+    );
+    await expect(completeOnce({ ...options, model: 'fake-redirect-loop' })).rejects.toThrow(
+      /too many times/,
+    );
+
+    fixture.client.close();
+  });
+
   it('does not trigger mention bots without an @mention', async () => {
     const fixture = await setupBot('fake-ok', 'mention');
     let botMessages = 0;

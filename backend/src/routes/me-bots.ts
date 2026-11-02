@@ -5,6 +5,7 @@ import { badRequest, forbidden } from '../errors';
 import { requireAuth } from '../middleware/auth';
 import { asyncHandler } from '../middleware/error';
 import {
+  assertBotCreateRate,
   createBot,
   disableBot,
   getBotById,
@@ -104,12 +105,13 @@ router.post(
 router.post(
   '/bots',
   asyncHandler(async (req, res) => {
+    const user = currentUser(req);
+    await assertBotCreateRate(user.id);
     const parsed = createSchema.safeParse(req.body);
     if (!parsed.success) {
       throw badRequest('INVALID_INPUT', parsed.error.issues[0]?.message ?? 'Invalid input');
     }
     const input = parsed.data;
-    const user = currentUser(req);
     const scope = input.scope ?? 'room';
     const created = await createBot({
       ...input,

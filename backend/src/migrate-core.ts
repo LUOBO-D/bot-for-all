@@ -17,17 +17,17 @@ function resolveMigrationsDir(): string {
   throw new Error(`Migrations directory not found. Tried: ${candidates.join(', ')}`);
 }
 
-export async function runMigrations(): Promise<void> {
+export async function runMigrations(databaseUrl: string = config.databaseUrl): Promise<void> {
   const dir = resolveMigrationsDir();
   const conn = await createConnection({
-    uri: config.databaseUrl,
+    uri: databaseUrl,
     multipleStatements: true,
     timezone: 'Z',
   });
 
   try {
     const [lockRows] = await conn.query<RowDataPacket[]>(
-      "SELECT GET_LOCK('botforall_migrations', 60) AS acquired",
+      "SELECT GET_LOCK('bfa_migrate', 30) AS acquired",
     );
     if (Number(lockRows[0]?.acquired) !== 1) {
       throw new Error('Could not acquire migration lock (another migration is running)');
@@ -63,7 +63,7 @@ export async function runMigrations(): Promise<void> {
     }
   } finally {
     try {
-      await conn.query("SELECT RELEASE_LOCK('botforall_migrations')");
+      await conn.query("SELECT RELEASE_LOCK('bfa_migrate')");
     } catch {
       // connection may already be gone; the lock is released on disconnect
     }

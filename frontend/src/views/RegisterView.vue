@@ -84,6 +84,7 @@ onMounted(loadCaptcha);
         <input
           v-model="form.username"
           data-testid="username"
+          aria-label="用户名"
           placeholder="用户名（3-32 位字母/数字/下划线）"
           autocomplete="username"
         />
@@ -91,18 +92,21 @@ onMounted(loadCaptcha);
           v-model="form.password"
           data-testid="password"
           type="password"
+          aria-label="密码"
           placeholder="密码（至少 8 位）"
           autocomplete="new-password"
         />
         <input
           v-model="form.displayName"
           data-testid="display-name"
+          aria-label="显示名（可选）"
           placeholder="显示名（可选）"
         />
         <div v-if="captcha.svg" class="captcha-row">
           <input
             v-model="form.captchaText"
             data-testid="captcha"
+            aria-label="验证码"
             placeholder="验证码"
             autocomplete="off"
           />

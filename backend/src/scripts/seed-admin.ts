@@ -9,10 +9,14 @@ async function main(): Promise<void> {
   );
   const existing = rows[0];
   if (existing) {
-    if (existing.role !== 'admin') {
-      await pool.execute("UPDATE users SET role = 'admin' WHERE id = ?", [existing.id]);
-    }
-    console.log(`admin id=${existing.id}`);
+    // Always sync role + password: re-running seed must actually rotate the
+    // admin credential when ADMIN_PASSWORD changed, not silently keep the old hash.
+    const passwordHash = await hashPassword(config.adminPassword);
+    await pool.execute("UPDATE users SET role = 'admin', password_hash = ? WHERE id = ?", [
+      passwordHash,
+      existing.id,
+    ]);
+    console.log(`admin id=${existing.id} (role + password synced)`);
   } else {
     const passwordHash = await hashPassword(config.adminPassword);
     const [result] = await pool.execute<ResultSetHeader>(

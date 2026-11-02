@@ -1,0 +1,140 @@
+# Deliberately distinct from the dev compose project (which defaults to the
+# checkout directory name), so prod containers, networks and the MySQL volume
+# never collide with a local `docker-compose.dev.yml` stack in the same folder.
+name: bot-for-all-prod
+
+# Production stack: MySQL + Redis + API/Socket.IO server + Nginx (static SPA + proxy).
+#
+#   cp .env.production.example .env.production   # then fill in every value
+#   docker compose --env-file .env.production -f docker-compose.prod.yml up -d --build
+#
+# MySQL and Redis are never published on the host: they are reachable only from
+# the backend over the private `data` network.
+
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+    environment:
+      MYSQL_DATABASE: chat
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env.production (see .env.production.example)}
+      TZ: UTC
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      # Password comes from the container env, so it never appears in the
+      # compose file or in `docker inspect` arguments.
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    networks:
+      - data
+
+  # Shared rate-limit counters and the Socket.IO adapter bus (backend
+  # REDIS_URL): pub/sub carries events between backend replicas. No
+  # persistence: the keys are short-lived window counters, and losing them
+  # only resets the current window, so a restart is harmless. Never published
+  # on the host.
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command:
+      - redis-server
+      # No RDB snapshots / AOF: counters are disposable.
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+      - --maxmemory
+      - 128mb
+      - --maxmemory-policy
+      - allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    networks:
+      - data
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: bot-for-all-backend:latest
+    restart: unless-stopped
+    env_file:
+      # Secrets (JWT_SECRET, BOT_KEY_SECRET, ADMIN_*, optional CORS_ORIGIN).
+      # Optional so `docker compose config` still works before the file exists;
+      # the server refuses to boot without the required values.
+      - path: .env.production
+        required: false
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      DATABASE_URL: mysql://root:${MYSQL_ROOT_PASSWORD}@mysql:3306/chat
+      # Shared rate-limit counters; without it the backend keeps them in-process.
+      REDIS_URL: redis://redis:6379
+      # Production hardening: bot base URLs may not target loopback/private
+      # networks, and exactly one proxy hop (Nginx) is trusted for client IPs.
+      ALLOW_PRIVATE_BOT_URLS: "false"
+      TRUST_PROXY: "1"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/api/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    # Node's own graceful-shutdown budget is 10s; leave it room to finish.
+    stop_grace_period: 15s
+    volumes:
+      # Attachments live on disk; keep them across container recreations.
+      - uploads:/app/backend/uploads
+    networks:
+      - data
+      - edge
+
+  web:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    image: bot-for-all-web:latest
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+    networks:
+      - edge
+
+volumes:
+  mysql-data:
+  uploads:
+
+networks:
+  # Public-facing: Nginx <-> backend.
+  edge:
+  # Private: backend <-> MySQL.
+  data:

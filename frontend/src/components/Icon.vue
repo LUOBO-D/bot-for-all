@@ -20,13 +20,20 @@ const paths: Record<string, string> = {
   check: 'M20 6L9 17l-5-5',
   link: 'M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1',
   reply: 'M9 17l-5-5 5-5M4 12h10a6 6 0 0 1 6 6v1',
+  forward: 'M15 7l5 5-5 5M20 12H10a6 6 0 0 0-6 6v1',
   more: 'M5 12h.01M12 12h.01M19 12h.01',
   pin: 'M12 17v5M9 3h6l-1 6 3 3v2H7v-2l3-3-1-6z',
   trash: 'M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v5M14 11v5',
   smile:
     'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18M8.5 14a4 4 0 0 0 7 0M9 9h.01M15 9h.01',
   hash: 'M4 9h16M4 15h16M10 3L8 21M16 3l-2 18',
+  bell: 'M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0',
+  bellOff:
+    'M13.7 21a2 2 0 0 1-3.4 0M18.6 13A17 17 0 0 0 18 8M6.3 6.3A6 6 0 0 0 6 8c0 7-3 9-3 9h14M3 3l18 18',
+  megaphone:
+    'M3 10v4a1 1 0 0 0 1 1h3l5 4V5L7 9H4a1 1 0 0 0-1 1zM16 8a4 4 0 0 1 0 8M19 5a8 8 0 0 1 0 14',
   chat: 'M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z',
+  clock: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18M12 7v5l3 2',
 };
 
 const d = computed(() => paths[props.name] ?? paths.chat);

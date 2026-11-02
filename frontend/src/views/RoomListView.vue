@@ -11,6 +11,7 @@ import { avatarClass, formatRelative, initialOf, plainPreview } from '../utils/f
 const router = useRouter();
 const chat = useChatStore();
 const busy = ref(false);
+const markingAll = ref(false);
 
 onMounted(() => {
   chat.bind();
@@ -28,6 +29,24 @@ const rooms = computed<RoomSummary[]>(() => {
   }
   return list;
 });
+
+const hasUnread = computed(() => rooms.value.some((room) => room.unreadCount > 0));
+
+async function markAllRead() {
+  if (markingAll.value) {
+    return;
+  }
+  markingAll.value = true;
+  try {
+    const { data } = await http.post<{ updated: number }>('/rooms/read-all', {});
+    await chat.loadRooms();
+    ElMessage.success(`已将 ${data.updated} 个房间标为已读`);
+  } catch (error) {
+    ElMessage.error(errorMessage(error));
+  } finally {
+    markingAll.value = false;
+  }
+}
 
 function cardMeta(room: RoomSummary): string {
   const bits = [`#${room.id}`];
@@ -76,6 +95,16 @@ async function open(room: RoomSummary) {
             <span class="count">{{ rooms.length }}</span>
             间 · 机器人是群成员：拉进来、挂在成员列表里，@它 就会逐字回复。
           </p>
+          <button
+            v-if="hasUnread"
+            type="button"
+            class="btn ghost small wb-read-all"
+            data-testid="rooms-read-all"
+            :disabled="markingAll"
+            @click="markAllRead"
+          >
+            全部已读
+          </button>
         </header>
 
         <div class="wb-layout">
@@ -132,3 +161,11 @@ async function open(room: RoomSummary) {
     </main>
   </div>
 </template>
+
+<style scoped>
+/* Sits at the far end of the header, clear of the title/lead baseline. */
+.wb-read-all {
+  margin-left: auto;
+  align-self: center;
+}
+</style>

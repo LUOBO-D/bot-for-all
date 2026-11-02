@@ -117,6 +117,70 @@ function isBlockedIpv6(bytes: number[]): boolean {
   return bytes[0] === 0xff; // ff00::/8 multicast
 }
 
+/** Parses one `inet_aton` part: decimal, `0x` hex or leading-`0` octal. */
+function inetAtonPart(part: string): number | null {
+  let value: number;
+  if (/^0[xX][0-9a-fA-F]+$/.test(part)) {
+    value = Number.parseInt(part.slice(2), 16);
+  } else if (/^0[0-7]+$/.test(part)) {
+    value = Number.parseInt(part.slice(1), 8);
+  } else if (/^[0-9]+$/.test(part)) {
+    value = Number.parseInt(part, 10);
+  } else {
+    return null;
+  }
+  return Number.isSafeInteger(value) ? value : null;
+}
+
+/**
+ * Parses the legacy numeric IPv4 spellings `inet_aton` accepts (1–4 parts,
+ * decimal/octal/hex), e.g. `2852039166`, `0xa9fea9fe` and `169.254.43518`.
+ * Resolvers and proxies treat these as the dotted-quad address, so URL checks
+ * must classify them the same way.
+ */
+function legacyIpv4Bytes(address: string): number[] | null {
+  if (address.length === 0 || address.length > 32) {
+    return null;
+  }
+  const parts = address.split('.');
+  if (parts.length > 4) {
+    return null;
+  }
+  const values: number[] = [];
+  for (const part of parts) {
+    const value = inetAtonPart(part);
+    if (value === null) {
+      return null;
+    }
+    values.push(value);
+  }
+  const head = values.slice(0, -1);
+  const last = values[values.length - 1];
+  if (head.some((value) => value > 0xff) || last >= 256 ** (4 - head.length)) {
+    return null;
+  }
+  let combined = last;
+  for (let index = 0; index < head.length; index += 1) {
+    combined += head[index] * 256 ** (3 - index);
+  }
+  return [
+    (combined >>> 24) & 0xff,
+    (combined >>> 16) & 0xff,
+    (combined >>> 8) & 0xff,
+    combined & 0xff,
+  ];
+}
+
+/**
+ * True when the address is the cloud metadata endpoint (169.254.169.254),
+ * including IPv4-mapped IPv6 and legacy numeric spellings. Unparseable input
+ * is not metadata.
+ */
+export function isMetadataAddress(address: string): boolean {
+  const bytes = effectiveIpv4(address) ?? legacyIpv4Bytes(address);
+  return bytes !== null && bytes.every((byte, index) => byte === METADATA_IPV4[index]);
+}
+
 /** True when the address is loopback, private, link-local, CGNAT, multicast or unspecified. */
 export function isBlockedAddress(address: string): boolean {
   const v4 = ipv4Bytes(address);
@@ -128,14 +192,6 @@ export function isBlockedAddress(address: string): boolean {
     return isBlockedIpv6(v6);
   }
   return true; // unparseable address: fail closed
-}
-
-function isMetadataTarget(hostname: string): boolean {
-  if (ALWAYS_BLOCKED_HOSTS[hostname]) {
-    return true;
-  }
-  const v4 = effectiveIpv4(hostname);
-  return v4 != null && v4.every((byte, index) => byte === METADATA_IPV4[index]);
 }
 
 export interface BotUrlOptions {
@@ -171,7 +227,8 @@ export async function assertSafeBotUrl(
   if (hostname.length === 0) {
     throw unsafe('Bot base URL must include a host');
   }
-  if (isMetadataTarget(hostname)) {
+  // Cloud metadata hosts stay blocked even when private bot URLs are allowed.
+  if (ALWAYS_BLOCKED_HOSTS[hostname] === true || isMetadataAddress(hostname)) {
     throw unsafe(`Bot base URL host is not allowed: ${hostname}`);
   }
   if (allowPrivate) {

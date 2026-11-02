@@ -150,4 +150,57 @@ describe('messages', () => {
     expect(response.status).toBe(403);
     expect(response.body.error.code).toBe('NOT_MEMBER');
   });
+
+  it('treats LIKE wildcards in search queries literally', async () => {
+    const user = await createTestUser('search_wild');
+    const roomId = await createTestRoom(user);
+    for (const [index, content] of ['a_b', 'axb', '100%', '100 percent'].entries()) {
+      await createMessage({
+        roomId,
+        senderId: user.id,
+        senderType: 'user',
+        content,
+        clientMsgId: `wild-${index}`,
+      });
+    }
+
+    const underscore = await searchMessages(roomId, 'a_b');
+    expect(underscore.map((message) => message.content)).toEqual(['a_b']);
+
+    const percent = await searchMessages(roomId, '%');
+    expect(percent.map((message) => message.content)).toEqual(['100%']);
+
+    const backslash = await searchMessages(roomId, '\\');
+    expect(backslash).toHaveLength(0);
+  });
+
+  it('reports no more pages when the page is exactly full', async () => {
+    const user = await createTestUser('boundary_user');
+    const roomId = await createTestRoom(user);
+    for (let index = 1; index <= 3; index += 1) {
+      await createMessage({
+        roomId,
+        senderId: user.id,
+        senderType: 'user',
+        content: `m${index}`,
+        clientMsgId: `boundary-${index}`,
+      });
+    }
+
+    const latest = await listMessages(roomId, { limit: 3 });
+    expect(latest.messages.map((message) => message.seq)).toEqual([1, 2, 3]);
+    expect(latest.hasMore).toBe(false);
+
+    const forward = await listMessages(roomId, { afterSeq: 1, limit: 2 });
+    expect(forward.messages.map((message) => message.seq)).toEqual([2, 3]);
+    expect(forward.hasMore).toBe(false);
+
+    const backward = await listMessages(roomId, { beforeSeq: 3, limit: 2 });
+    expect(backward.messages.map((message) => message.seq)).toEqual([1, 2]);
+    expect(backward.hasMore).toBe(false);
+
+    const shorter = await listMessages(roomId, { limit: 2 });
+    expect(shorter.messages.map((message) => message.seq)).toEqual([2, 3]);
+    expect(shorter.hasMore).toBe(true);
+  });
 });

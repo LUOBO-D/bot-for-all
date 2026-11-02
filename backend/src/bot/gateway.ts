@@ -1,8 +1,11 @@
 import type { Server } from 'socket.io';
 import { config } from '../config';
+import { ApiError } from '../errors';
 import { logger } from '../logger';
 import { checkRate } from '../middleware/ratelimit';
-import { createMessage, finalizeMessage, sweepStreaming } from '../services/message';
+import { attachLinkPreview } from '../services/link-preview';
+import { createMessage, finalizeMessage, getMessageById, sweepStreaming } from '../services/message';
+import { notifyMentions } from '../services/notifications';
 import { getBotsForRoom } from '../services/bot';
 import type { BotRow, MessageDTO } from '../types';
 import { buildContext } from './context';
@@ -15,7 +18,7 @@ import {
 import { BotQueue, type BotJob } from './queue';
 import { shouldTrigger } from './trigger';
 
-type BotErrorCode = 'AUTH' | 'TIMEOUT' | 'PROVIDER' | 'UNKNOWN';
+type BotErrorCode = 'AUTH' | 'TIMEOUT' | 'PROVIDER' | 'CANCELLED' | 'UNKNOWN';
 
 interface CacheEntry {
   at: number;
@@ -38,16 +41,40 @@ function classifyError(error: unknown): BotErrorCode {
   if (error instanceof ProviderError) {
     return 'PROVIDER';
   }
+  // Response-size rejections surface as ApiError 502 BOT_RESPONSE_TOO_LARGE;
+  // they are provider faults for the client too.
+  if (error instanceof ApiError && error.code === 'BOT_RESPONSE_TOO_LARGE') {
+    return 'PROVIDER';
+  }
   return 'UNKNOWN';
 }
 
 export interface BotGateway {
   onUserMessage(roomId: number, message: MessageDTO): Promise<void>;
+  /** Aborts every live generation of `roomId`; returns how many were aborted. */
+  cancelRoom(roomId: number): number;
   sweepStreaming(): Promise<void>;
 }
 
 export function createBotGateway(io: Server): BotGateway {
   const cache = new Map<number, CacheEntry>();
+  // Live generations per room, so a stop request can abort them mid-stream.
+  const activeGenerations = new Map<number, Set<AbortController>>();
+
+  function cancelRoom(roomId: number): number {
+    const controllers = activeGenerations.get(roomId);
+    if (!controllers) {
+      return 0;
+    }
+    let canceled = 0;
+    for (const controller of controllers) {
+      if (!controller.signal.aborted) {
+        controller.abort();
+        canceled += 1;
+      }
+    }
+    return canceled;
+  }
 
   async function loadBots(roomId: number): Promise<BotRow[]> {
     const now = Date.now();
@@ -68,7 +95,7 @@ export function createBotGateway(io: Server): BotGateway {
     const { roomId, bot } = job;
     const roomKey = `room:${roomId}`;
 
-    if (!checkRate(`bot:${bot.userId}`, config.botRatePerMin, 60_000)) {
+    if (!(await checkRate(`bot:${bot.userId}`, config.botRatePerMin, 60_000))) {
       io.to(roomKey).emit('system:notice', {
         roomId,
         code: 'BOT_RATE_LIMITED',
@@ -76,6 +103,26 @@ export function createBotGateway(io: Server): BotGateway {
       });
       return;
     }
+
+    // Registered before the placeholder row exists so a stop that lands while
+    // the turn is still starting cancels it too.
+    const controller = new AbortController();
+    const roomControllers = activeGenerations.get(roomId) ?? new Set<AbortController>();
+    roomControllers.add(controller);
+    activeGenerations.set(roomId, roomControllers);
+    try {
+      await streamReply(job, controller);
+    } finally {
+      roomControllers.delete(controller);
+      if (roomControllers.size === 0 && activeGenerations.get(roomId) === roomControllers) {
+        activeGenerations.delete(roomId);
+      }
+    }
+  }
+
+  async function streamReply(job: BotJob, controller: AbortController): Promise<void> {
+    const { roomId, bot } = job;
+    const roomKey = `room:${roomId}`;
 
     const placeholder = await createMessage({
       roomId,
@@ -115,6 +162,7 @@ export function createBotGateway(io: Server): BotGateway {
         temperature: bot.temperature,
         maxTokens: bot.maxTokens,
         extraBody: bot.extraBody,
+        signal: controller.signal,
       })) {
         content += delta;
         pending += delta;
@@ -124,6 +172,11 @@ export function createBotGateway(io: Server): BotGateway {
         }
       }
       flush();
+      // A stop that lands between the last delta and the finalize must settle
+      // the row as an error, never as a completed reply.
+      if (controller.signal.aborted) {
+        throw new DOMException('Bot generation canceled', 'AbortError');
+      }
       await finalizeMessage(placeholder.id, content, 'done');
       io.to(roomKey).emit('message:final', {
         roomId,
@@ -131,9 +184,32 @@ export function createBotGateway(io: Server): BotGateway {
         content,
         status: 'done',
       });
+      // The placeholder DTO is still `streaming`; re-read the finalized row so
+      // the preview sees the final content and status.
+      void getMessageById(placeholder.id)
+        .then((finalMessage) => attachLinkPreview(io, roomId, finalMessage))
+        .catch((error) => {
+          logger.error(
+            { err: error, roomId, botId: bot.userId },
+            'bot link preview failed',
+          );
+        });
+      void notifyMentions(io, roomId, { ...placeholder, content }, {
+        id: bot.userId,
+        name: bot.name,
+      }).catch((error) => {
+        logger.error(
+          { err: error, roomId, botId: bot.userId },
+          'bot mention notification failed',
+        );
+      });
     } catch (error) {
       flush();
-      const code = classifyError(error);
+      // An abort we requested ourselves is a stop, not a provider timeout; the
+      // partial content streamed so far is kept on the finalized row.
+      const code: BotErrorCode = controller.signal.aborted
+        ? 'CANCELLED'
+        : classifyError(error);
       await finalizeMessage(placeholder.id, content, 'error');
       io.to(roomKey).emit('message:final', {
         roomId,
@@ -142,10 +218,17 @@ export function createBotGateway(io: Server): BotGateway {
         status: 'error',
         error: code,
       });
-      logger.error(
-        { err: error, botId: bot.userId, roomId, code },
-        'bot generation failed',
-      );
+      if (code === 'CANCELLED') {
+        logger.info(
+          { botId: bot.userId, roomId, seq: placeholder.seq },
+          'bot generation canceled',
+        );
+      } else {
+        logger.error(
+          { err: error, botId: bot.userId, roomId, code },
+          'bot generation failed',
+        );
+      }
     }
   }
 
@@ -156,7 +239,9 @@ export function createBotGateway(io: Server): BotGateway {
       return;
     }
     const bots = await loadBots(roomId);
-    for (const bot of bots) {
+    // `getBotsForRoom` already caps the query, but the 30s cache can hold a
+    // list loaded under a larger limit; the cap belongs at the trigger point.
+    for (const bot of bots.slice(0, config.botMaxPerRoom)) {
       if (!shouldTrigger(bot, message)) {
         continue;
       }
@@ -166,6 +251,7 @@ export function createBotGateway(io: Server): BotGateway {
 
   return {
     onUserMessage,
+    cancelRoom,
     sweepStreaming,
   };
 }

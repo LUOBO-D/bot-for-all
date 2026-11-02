@@ -1,0 +1,26 @@
+# Keep the build context small and free of local state.
+
+# VCS / editor
+.git
+.gitignore
+.vscode
+.idea
+
+# Dependencies and build output are produced inside the image.
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+
+# Local secrets. The examples stay so images/contexts can be inspected.
+.env
+.env.*
+!.env.example
+!.env.production.example
+
+# Tests, reports and local artifacts
+e2e
+test-results
+playwright-report
+screenshots
+backend/uploads
+*.log
