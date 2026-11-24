@@ -2,6 +2,7 @@
   "name": "bot-for-all",
   "private": true,
   "version": "0.1.0",
+  "packageManager": "pnpm@11.22.0",
   "scripts": {
     "dev": "pnpm -r --parallel dev",
     "build": "pnpm -r build",
@@ -14,5 +15,8 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.56.0"
+  },
+  "engines": {
+    "node": ">=24"
   }
 }

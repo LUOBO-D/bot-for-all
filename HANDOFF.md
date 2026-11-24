@@ -26,6 +26,8 @@
 ## 2. 本地启动
 
 ```bash
+# 前置：Node ≥ 24；pnpm 版本已被 package.json 的 engines + packageManager 锁定
+npm i -g pnpm@11.22.0
 docker compose -f docker-compose.dev.yml up -d --wait
 pnpm install
 cp .env.example .env
