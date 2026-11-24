@@ -2247,7 +2247,7 @@ onUnmounted(() => {
   z-index: 3000;
   display: flex;
   align-items: flex-end;
-  background: rgba(21, 23, 15, 0.45);
+  background: rgba(4, 6, 18, 0.6);
 }
 
 .more-sheet {
@@ -2258,7 +2258,7 @@ onUnmounted(() => {
   border-top: 1px solid var(--line-strong);
   border-radius: 16px 16px 0 0;
   background: var(--paper-2);
-  box-shadow: 0 -12px 32px rgba(21, 23, 15, 0.18);
+  box-shadow: 0 -12px 32px rgba(0, 0, 0, 0.5);
 }
 
 .more-sheet-head {
@@ -2343,13 +2343,13 @@ onUnmounted(() => {
   margin-top: 4px;
 }
 
-/* Matched fragment in a search result. `--lime` (#d8f24a) is the same token in
-   both themes, and 38% alpha over paper / ink keeps the inherited text colour
-   readable; inline spans leave the ellipsis and line-height of `.search-text`
-   untouched. */
+/* Matched fragment in a search result. `--lime` (#d9b26a) is the same token in
+   the night theme, and 30% alpha over the deep paper keeps the inherited text
+   colour readable; inline spans leave the ellipsis and line-height of
+   `.search-text` untouched. */
 .search-hit {
   border-radius: 2px;
-  background: rgba(216, 242, 74, 0.38);
+  background: rgba(217, 178, 106, 0.3);
   color: inherit;
   font-weight: 600;
 }

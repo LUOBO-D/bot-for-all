@@ -19,7 +19,7 @@
 - 部署：`docker-compose.dev.yml` 只起 MySQL/Redis；`docker-compose.prod.yml` 起 Nginx + backend + MySQL + Redis。
 - CI：`.github/workflows/ci.yml`，push / PR 自动跑后端测试、前端构建、E2E。
 
-主要能力：房间/成员/角色、消息编辑与历史、回复/转发/置顶/表情、附件与媒体库、语音/视频封面、投票、收藏、草稿、定时消息、已读回执、通知中心、搜索、翻译、机器人流式回复、**机器人联网搜索（web_search/web_fetch 工具调用，多 provider）**、跨实例 bot 状态（Redis 可选）、管理端（用户/房间/bot/举报/公告/审计/统计/导出）。
+主要能力：房间/成员/角色、消息编辑与历史、回复/转发/置顶/表情、附件与媒体库、语音/视频封面、投票、收藏、草稿、定时消息、已读回执、通知中心、搜索、翻译、机器人流式回复、机器人联网搜索（web_search/web_fetch 工具调用，多 provider）、跨实例 bot 状态（Redis 可选）、管理端（用户/房间/bot/举报/公告/审计/统计/导出）；**前端为星空夜色单主题（Night-only「星夜」，无主题切换器，ProfileDialog 无主题项）**。
 
 ---
 

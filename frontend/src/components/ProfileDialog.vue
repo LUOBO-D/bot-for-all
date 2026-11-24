@@ -8,7 +8,6 @@ import { useChatStore } from '../stores/chat';
 import type { NotificationSettings } from '../types';
 import Icon from './Icon.vue';
 import UserAvatar from './UserAvatar.vue';
-import { themeMode, setTheme, type ThemeMode } from '../theme';
 
 const props = defineProps<{ modelValue: boolean }>();
 const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>();
@@ -38,11 +37,6 @@ const changingPwd = ref(false);
 const loggingOutAll = ref(false);
 const exportingData = ref(false);
 const exportingZip = ref(false);
-const themeOptions: { value: ThemeMode; label: string }[] = [
-  { value: 'system', label: '跟随系统' },
-  { value: 'light', label: '浅色' },
-  { value: 'dark', label: '深色' },
-];
 const notifyModeOptions: { value: NotificationSettings['notifyMode']; label: string }[] = [
   { value: 'all', label: '全部消息' },
   { value: 'mention', label: '仅提及' },
@@ -562,27 +556,6 @@ async function logout() {
       >
         {{ savingDnd ? '保存中…' : '保存免打扰时段' }}
       </button>
-    </div>
-
-    <div class="theme-field">
-      <div class="theme-copy">
-        <strong>主题</strong>
-        <small>跟随系统会随系统外观实时切换</small>
-      </div>
-      <div class="theme-options" role="radiogroup" aria-label="主题">
-        <button
-          v-for="option in themeOptions"
-          :key="option.value"
-          type="button"
-          role="radio"
-          class="btn ghost theme-option"
-          :class="{ active: themeMode === option.value }"
-          :aria-checked="themeMode === option.value"
-          @click="setTheme(option.value)"
-        >
-          {{ option.label }}
-        </button>
-      </div>
     </div>
 
     <div class="theme-field pwd-field">

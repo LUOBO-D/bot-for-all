@@ -3221,7 +3221,7 @@ onBeforeUnmount(() => {
   width: 9px;
   height: 9px;
   border-radius: 2px;
-  box-shadow: inset 0 0 0 1px rgba(21, 23, 15, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
 }
 
 .trend-skeleton {
@@ -3328,7 +3328,7 @@ onBeforeUnmount(() => {
   flex: 1 1 0;
   min-width: 2px;
   border-radius: 2px 2px 0 0;
-  box-shadow: inset 0 0 0 1px rgba(21, 23, 15, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.3);
   opacity: 0.9;
   transition: opacity 0.12s ease-out;
 }
@@ -3841,11 +3841,11 @@ onBeforeUnmount(() => {
 }
 
 .status-pill.active {
-  color: #45744a;
+  color: var(--success);
 }
 
 .status-pill.active .status-dot {
-  background: #45744a;
+  background: var(--success);
 }
 
 .status-pill.banned {
@@ -4176,11 +4176,11 @@ onBeforeUnmount(() => {
 }
 
 .report-status.resolved {
-  color: #45744a;
+  color: var(--success);
 }
 
 .report-status.resolved .status-dot {
-  background: #45744a;
+  background: var(--success);
 }
 
 .report-status.dismissed {

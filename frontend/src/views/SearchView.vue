@@ -488,7 +488,7 @@ function resultTime(value: string): string {
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
   border-bottom: 1px solid var(--line);
-  box-shadow: inset 0 1px 0 var(--glass-hi), 0 8px 24px rgba(21, 23, 15, 0.06);
+  box-shadow: inset 0 1px 0 var(--glass-hi), 0 8px 24px rgba(0, 0, 0, 0.25);
 }
 
 .back-btn {
@@ -671,8 +671,8 @@ function resultTime(value: string): string {
 
 .result:hover {
   border-color: var(--line-strong);
-  background: var(--white);
-  box-shadow: 0 2px 10px rgba(21, 23, 15, 0.06);
+  background: var(--paper-3);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
 }
 
 .result-avatar {

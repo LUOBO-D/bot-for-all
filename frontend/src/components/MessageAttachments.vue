@@ -802,26 +802,26 @@ function formatSize(size: number): string {
   outline-offset: 1px;
 }
 
-/* Lime self bubbles: the paper well would glare, so tint the ink instead. */
+/* Gold self bubbles: the paper well would glare, so tint the ink instead. */
 .msg.self .attachment-file {
-  border-color: rgba(21, 23, 15, 0.16);
+  border-color: rgba(22, 28, 54, 0.28);
   border-left-color: var(--ink-2);
-  background: rgba(21, 23, 15, 0.08);
+  background: rgba(22, 28, 54, 0.08);
 }
 
 .msg.self .attachment-image-card {
-  border-color: rgba(21, 23, 15, 0.16);
-  background: rgba(21, 23, 15, 0.08);
+  border-color: rgba(22, 28, 54, 0.28);
+  background: rgba(22, 28, 54, 0.08);
 }
 
 .msg.self .attachment-audio-card {
-  border-color: rgba(21, 23, 15, 0.16);
-  background: rgba(21, 23, 15, 0.08);
+  border-color: rgba(22, 28, 54, 0.28);
+  background: rgba(22, 28, 54, 0.08);
 }
 
 .msg.self .attachment-video-card {
-  border-color: rgba(21, 23, 15, 0.16);
-  background: rgba(21, 23, 15, 0.08);
+  border-color: rgba(22, 28, 54, 0.28);
+  background: rgba(22, 28, 54, 0.08);
 }
 
 .msg.self .attachment-audio,
@@ -863,7 +863,7 @@ function formatSize(size: number): string {
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: var(--r-md);
-  background: rgba(21, 23, 15, 0.96);
+  background: rgba(4, 6, 18, 0.96);
 }
 
 .lightbox-head {

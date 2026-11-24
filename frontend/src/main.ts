@@ -19,7 +19,7 @@ import './style.css';
 import { useAuthStore } from './stores/auth';
 import { initTheme } from './theme';
 
-// Apply the persisted theme before any UI (login page included) is painted.
+// Pin the night-only theme before any UI (login page included) is painted.
 initTheme();
 
 const app = createApp(App);

@@ -1,57 +1,91 @@
 /* ============================================================
-   墨纸 · 成员感 (Ink & Paper, Members Not Tools)
-   Material system:
-     ink     — nav rail, near-black with a yellow cast (no #000)
-     paper   — workspace backdrop  / wells (paper-3)
-     paper-2 — raised surfaces: bubbles, cards, dialogs
-     paper-3 — sunk surfaces: inputs, rails, wells
-     lime    — the only accent: fills only (CTA, self bubble,
-               unread, presence). Never used as text on light bg.
-     rust    — bot transcript material: 2px line + micro-labels.
+   星夜 · 成员感 (Starry Night, Members Not Tools)
+   Night-only material system — one theme, painted on the sky:
+     paper   — the deep-indigo night (#0a0e1c) is the workspace;
+               raised surfaces (paper-2 #10152a: bubbles, cards,
+               dialogs) and sunk wells (paper-3 #161c36: inputs,
+               rails) step across it in one seam.
+     ink     — the rail material (#161c36): sidebar, dark pills…
+               and the one dark tone that sits ON gold fills.
+     gold    — starlight gold (#d9b26a): the only accent, fills
+               only (CTA, self bubble, unread, presence, focus
+               rings). Never used as body text on night surfaces.
+     seal    — cinnabar 朱砂 (#c8503c): bot transcript material,
+               2px line + micro-labels. 成员感 semantics unchanged.
+   The fixed starfield (.sky, SkyField.vue) is the bottom layer;
+   glass panels are translucent and blur what drifts behind them.
    Type ramp: 34 display / 20 heading / 15 body / 13 secondary
-              / 11 mono micro (times, handles, labels, counts).
+              / 11 mono micro (times, handles, labels, counts);
+              --font-serif graces the display moments.
    Shape: 4/6/8px radii only. Two elevation steps: popovers, dialogs.
    ============================================================ */
 
 :root {
-  /* Material colors */
-  --ink: #15170f;
-  --ink-2: #23261a;        /* rail hover band */
-  --ink-3: #2e3221;        /* rail pressed / well on ink */
-  --paper: #f6f4ec;
-  --paper-2: #fbfaf5;      /* raised card/bubble */
-  --paper-3: #eeece0;      /* sunk wells, members rail */
-  --white: #ffffff;
+  color-scheme: dark;
 
-  /* Warm hairlines (decorative separators, not UI borders) */
-  --line: #e2dfcd;
-  --line-strong: #b9b39e;
-  --line-on-ink: rgba(246, 244, 236, 0.14);
+  /* Material colors */
+  --ink: #161c36;          /* rail: sidebar, drawers, dark pills */
+  --ink-2: #1d2543;        /* rail hover band */
+  --ink-3: #232a45;        /* rail pressed / raised avatar blocks */
+  --paper: #0a0e1c;        /* night-sky workspace */
+  --paper-2: #10152a;      /* raised card/bubble */
+  --paper-3: #161c36;      /* sunk wells, members rail */
+  --white: #ffffff;        /* captcha image surface only */
+
+  /* Hairlines (decorative separators, not UI borders) */
+  --line: #232a45;
+  --line-strong: #3a4364;
+  --line-on-ink: rgba(236, 233, 226, 0.14);
 
   /* Text */
-  --text: #15170f;
-  --muted: #5d5a46;        /* 6.32:1 on paper, 5.89:1 on paper-3 */
-  --faint: #6b6854;        /* tertiary text: 5.11:1 on paper, 4.74:1 on paper-3 */
+  --text: #ece9e2;
+  --muted: #a7aec2;
+  --faint: #8b93a9;
 
-  /* Text on ink */
-  --on-ink: #f6f4ec;       /* 16.4:1 */
-  --on-ink-muted: #b3ae9c; /* 8.1:1 */
-  --on-ink-dim: #9c9885;   /* 6.2:1 */
+  /* Text on ink rails — same ladder, same meaning */
+  --on-ink: #ece9e2;
+  --on-ink-muted: #a7aec2;
+  --on-ink-dim: #8b93a9;
 
   /* Accents */
-  --lime: #d8f24a;
-  --lime-hover: #e3f66a;
-  --lime-active: #c9e83a;  /* 12.98:1 vs ink text */
-  --rust: #b4531f;         /* 2px transcript line / chips (4.54:1) */
-  --rust-ink: #9a4416;     /* rust as text (5.94:1 on paper) */
-  --danger: #b3261e;       /* 5.94:1 on paper */
-  --danger-soft: #f3e3de;
+  --lime: #d9b26a;         /* 星辉金: fills + focus rings only */
+  --lime-hover: #e5c583;
+  --lime-active: #c9a053;  /* pressed gold, still ink-readable */
+  --accent-soft: #332f1e;  /* deep gold well for gold-text chips */
+  --rust: #c8503c;         /* 朱砂 transcript line / chips */
+  --rust-ink: #e8937e;     /* seal as text */
+  --success: #62a06e;      /* calm night green (status pills) */
+  --danger: #e5685a;       /* night red */
+  --danger-soft: #381b21;  /* deep red well */
+
+  /* Fenced code blocks */
+  --code-bg: #070a14;
+  --code-rule: #1d2440;
+  --code-text: #d5dae8;
+
+  /* Sky tokens — consumed by SkyField.vue (照搬 星野手帖 01-tokens) */
+  --s1: rgba(235, 240, 255, 0.9);
+  --s2: rgba(235, 240, 255, 0.65);
+  --s3: rgba(210, 224, 255, 0.8);
+  --s4: rgba(255, 244, 214, 0.85);
+  --s5: rgba(217, 178, 106, 0.9);
+  --neb1: rgba(88, 116, 200, 0.15);
+  --neb2: rgba(146, 96, 190, 0.1);
+  --meteor-grad: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.95),
+    rgba(255, 255, 255, 0.35) 55%,
+    transparent
+  );
+  --meteor-head: rgba(255, 255, 255, 0.95);
 
   /* Type */
   --font-body: -apple-system, 'PingFang SC', 'Noto Sans SC', 'Microsoft YaHei',
     system-ui, 'Segoe UI', sans-serif;
   --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas,
     'Liberation Mono', monospace;
+  --font-serif: 'Songti SC', 'STSong', 'Noto Serif CJK SC', 'Source Han Serif SC',
+    'SimSun', Georgia, 'Times New Roman', serif;
 
   --fs-display: 34px;  /* 34/20 = 1.7x */
   --fs-h: 20px;        /* 20/15 = 1.33x */
@@ -59,31 +93,31 @@
   --fs-sub: 13px;      /* 13/11 = 1.18x */
   --fs-mono: 11px;     /* WCAG functional-text floor */
 
-  /* Shape + depth */
+  /* Shape + depth: night shadows fall to black, not ink */
   --r-sm: 4px;         /* avatars, chips, dots */
   --r-md: 6px;         /* inputs, buttons, bubbles */
   --r-lg: 8px;         /* dialogs only */
-  /* Two elevation steps only: popovers over ink, dialogs over everything. */
-  --shadow-pop: 0 12px 32px rgba(21, 23, 15, 0.14);
-  --shadow-dialog: 0 24px 64px rgba(21, 23, 15, 0.18);
+  /* Two elevation steps only: popovers over the sky, dialogs over everything. */
+  --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.4);
+  --shadow-dialog: 0 24px 64px rgba(0, 0, 0, 0.5);
 
-  /* Element Plus -> ink & paper */
+  /* Element Plus -> 星夜 (navy primary, matches the rail material) */
   --el-color-primary: var(--ink);
-  --el-color-primary-dark-2: #3a3d2b;
-  --el-color-primary-light-3: #464936;
-  --el-color-primary-light-5: #7a7c68;
-  --el-color-primary-light-7: #b0b1a0;
-  --el-color-primary-light-8: #c8c9ba;
-  --el-color-primary-light-9: #e3e3d5;
-  --el-color-success: #45744a;
+  --el-color-primary-dark-2: #12162b;
+  --el-color-primary-light-3: #5c6072;
+  --el-color-primary-light-5: #8a8d9a;
+  --el-color-primary-light-7: #b9bbc3;
+  --el-color-primary-light-8: #d0d2d7;
+  --el-color-primary-light-9: #e7e8ec;
+  --el-color-success: var(--success);
   --el-color-warning: var(--rust-ink);
   --el-color-danger: var(--danger);
   --el-color-error: var(--danger);
   --el-color-info: var(--muted);
   --el-bg-color: var(--paper-2);
   --el-bg-color-page: var(--paper);
-  --el-fill-color: #e6e3d5;
-  --el-fill-color-light: var(--paper-3);
+  --el-fill-color: #1c2342;
+  --el-fill-color-light: #232a45;
   --el-fill-color-lighter: var(--paper-2);
   --el-fill-color-blank: var(--paper-2);
   --el-text-color-primary: var(--text);
@@ -98,7 +132,7 @@
   --el-border-color-dark: var(--muted);
   --el-border-radius-base: var(--r-md);
   --el-border-radius-small: var(--r-sm);
-  --el-overlay-color-lighter: rgba(21, 23, 15, 0.42);
+  --el-overlay-color-lighter: rgba(4, 6, 18, 0.6);
 }
 
 /* ============ base ============ */
@@ -114,11 +148,18 @@ body,
   margin: 0;
 }
 
+/* html is the night canvas: the fixed starfield (SkyField.vue) paints over
+   it and every translucent surface in turn; body stays transparent so the
+   stars show through behind the whole app. */
+html {
+  background: var(--paper);
+}
+
 body {
   font-family: var(--font-body);
   font-size: var(--fs-body);
   line-height: 1.55;
-  background: var(--paper);
+  background: transparent;
   color: var(--text);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
@@ -149,11 +190,11 @@ a {
 }
 
 a:hover {
-  text-decoration-color: var(--ink);
+  text-decoration-color: var(--text);
 }
 
 :focus-visible {
-  outline: 2px solid var(--ink);
+  outline: 2px solid var(--lime);
   outline-offset: 2px;
   border-radius: 2px;
 }
@@ -213,7 +254,7 @@ a:hover {
 }
 
 .btn:hover {
-  background: #e6e3d5;
+  background: var(--ink-2);
 }
 
 .btn:disabled {
@@ -282,7 +323,7 @@ a:hover {
 
 .icon-btn:hover {
   background: var(--paper-3);
-  color: var(--ink);
+  color: var(--text);
 }
 
 .icon-btn:disabled {
@@ -301,7 +342,7 @@ a:hover {
   height: 32px;
   border-radius: var(--r-sm);
   background: var(--ink);
-  color: var(--paper);
+  color: var(--on-ink);
   font-size: 13px;
   font-weight: 700;
   line-height: 1;
@@ -321,20 +362,21 @@ a:hover {
   font-size: 20px;
 }
 
-/* light scheme variants (even ids) */
+/* raised variants (even ids): paper chip, light letter, hairline */
 .av-0,
 .av-2,
 .av-4 {
   background: var(--paper-2);
-  color: var(--ink);
+  color: var(--text);
   border: 1px solid var(--line-strong);
 }
 
+/* rail variants (odd ids): ink chip, light letter */
 .av-1,
 .av-3,
 .av-5 {
   background: var(--ink);
-  color: var(--paper);
+  color: var(--on-ink);
 }
 
 .av-1 {
@@ -342,7 +384,7 @@ a:hover {
 }
 
 .av-5 {
-  background: #3a3d2b;
+  background: var(--line-strong);
 }
 
 /* Bot member avatar: paper with rust hairline */
@@ -452,7 +494,7 @@ a:hover {
 .field input:focus,
 .field textarea:focus,
 .field select:focus {
-  border-color: var(--ink);
+  border-color: var(--lime);
   background: var(--paper-2);
 }
 
@@ -483,7 +525,7 @@ a:hover {
 .switch-field input {
   width: 15px;
   height: 15px;
-  accent-color: var(--ink);
+  accent-color: var(--lime);
 }
 
 .section-title {
@@ -507,13 +549,13 @@ a:hover {
 /* ============ brand mark ============ */
 
 .brand-mark {
-  color: var(--paper);
+  color: var(--on-ink);
   flex: none;
   --mark-ring: var(--ink);
 }
 
 .brand-mark.on-paper {
-  color: var(--ink);
+  color: var(--text);
   --mark-ring: var(--paper);
 }
 
@@ -529,11 +571,14 @@ a:hover {
   min-height: 100%;
   display: grid;
   grid-template-columns: minmax(0, 340px) minmax(0, 1fr);
-  background: var(--paper);
+  background: transparent;
 }
 
 .auth-rail {
   background: var(--ink);
+  background: var(--glass-ink);
+  -webkit-backdrop-filter: blur(22px) saturate(1.35);
+  backdrop-filter: blur(22px) saturate(1.35);
   color: var(--on-ink);
   display: flex;
   flex-direction: column;
@@ -579,13 +624,17 @@ a:hover {
   width: 100%;
   max-width: 400px;
   background: var(--paper-2);
-  border: 1px solid var(--line);
+  background: var(--glass-pop);
+  -webkit-backdrop-filter: blur(8px) saturate(1.3);
+  backdrop-filter: blur(8px) saturate(1.3);
+  border: 1px solid var(--line-strong);
   border-radius: var(--r-lg);
   padding: 32px;
 }
 
 .auth-card h1 {
   margin: 0 0 6px;
+  font-family: var(--font-serif);
   font-size: var(--fs-display);
   font-weight: 700;
   letter-spacing: -0.02em;
@@ -611,7 +660,7 @@ a:hover {
 }
 
 .auth-card input:focus {
-  border-color: var(--ink);
+  border-color: var(--lime);
   background: var(--paper-2);
 }
 
@@ -1027,7 +1076,7 @@ a:hover {
 }
 
 .welcome-pane::-webkit-scrollbar-track {
-  background: var(--paper);
+  background: transparent;
 }
 
 .workbench-inner {
@@ -1051,6 +1100,7 @@ a:hover {
 
 .wb-title {
   margin: 0;
+  font-family: var(--font-serif);
   font-size: var(--fs-display);
   font-weight: 700;
   letter-spacing: -0.02em;
@@ -1094,7 +1144,7 @@ a:hover {
 
 .wb-card:hover {
   border-color: var(--line-strong);
-  background: var(--white);
+  background: var(--paper-3);
 }
 
 .wb-card.unjoined {
@@ -1189,6 +1239,7 @@ a:hover {
 }
 
 .wb-empty strong {
+  font-family: var(--font-serif);
   font-size: var(--fs-body);
   color: var(--text);
 }
@@ -1464,7 +1515,7 @@ a:hover {
 /* inline code sits on an ink scrim inside a lime utterance, on the sunk
    paper chip everywhere else — never inside a fenced block */
 .msg.self .bubble-content :not(pre) > code {
-  background: rgba(21, 23, 15, 0.09);
+  background: rgba(22, 28, 54, 0.12);
 }
 
 .msg.self.rich .bubble-content :not(pre) > code {
@@ -1504,7 +1555,7 @@ a:hover {
 
 .msg-action:hover {
   background: var(--paper-3);
-  color: var(--ink);
+  color: var(--text);
 }
 
 /* self bubbles hug the right edge — keep the hover action inside the pane */
@@ -1525,10 +1576,9 @@ a:hover {
   height: 14px;
   margin-left: 3px;
   vertical-align: -2px;
-  background: var(--ink);
+  background: var(--text);
   animation: cursor-blink 1s steps(2, start) infinite;
 }
-
 @keyframes cursor-blink {
   0%,
   100% {
@@ -1575,7 +1625,7 @@ a:hover {
 }
 
 .composer:focus-within {
-  border-color: var(--ink);
+  border-color: var(--lime);
 }
 
 /* offline / loading: the bar reads as unavailable instead of just silent */
@@ -1802,7 +1852,7 @@ a:hover {
    ============================================================ */
 
 .el-overlay {
-  background-color: rgba(21, 23, 15, 0.42);
+  background-color: rgba(4, 6, 18, 0.6);
 }
 
 .el-dialog {
@@ -2019,7 +2069,7 @@ a:hover {
 }
 
 .bot-card-actions .btn.ghost:hover:not(:disabled) {
-  color: var(--ink);
+  color: var(--text);
   border-color: var(--muted);
   background: var(--paper-3);
 }
@@ -2056,7 +2106,7 @@ a:hover {
   height: 44px;
   border-radius: var(--r-sm);
   background: var(--ink);
-  color: var(--paper);
+  color: var(--on-ink);
   display: grid;
   place-items: center;
   font-size: var(--fs-h);
@@ -2397,10 +2447,16 @@ a:hover {
   background: var(--lime);
 }
 
+/* the active row is a gold fill: label and handle drop to ink on it */
+.mention-item.active .mention-name,
+.mention-item.active .mention-handle {
+  color: var(--ink);
+}
+
 .mention-name {
   font-size: var(--fs-sub);
   font-weight: 700;
-  color: var(--ink);
+  color: var(--text);
 }
 
 .mention-handle {
@@ -2563,7 +2619,7 @@ a:hover {
   border: 1px solid var(--ink);
   border-radius: var(--r-md);
   background: var(--ink);
-  color: var(--paper);
+  color: var(--on-ink);
   font-family: var(--font-mono);
   font-size: var(--fs-mono);
   letter-spacing: 0.04em;
@@ -2634,7 +2690,7 @@ a:hover {
   border: 1px solid var(--line-strong);
   border-radius: var(--r-sm);
   background: var(--paper-2);
-  color: var(--ink);
+  color: var(--text);
   font-size: var(--fs-mono);
   font-family: var(--font-mono);
   letter-spacing: 0.04em;
@@ -2645,6 +2701,7 @@ a:hover {
 .preset-btn:hover {
   background: var(--lime);
   border-color: var(--lime);
+  color: var(--ink);
 }
 
 .preset-btn:active {
@@ -2754,9 +2811,10 @@ a:hover {
 .bubble-content pre {
   margin: 8px 0;
   padding: 10px 12px;
+  border: 1px solid var(--code-rule);
   border-radius: var(--r-sm);
-  background: var(--ink);
-  color: var(--paper);
+  background: var(--code-bg);
+  color: var(--code-text);
   font-size: var(--fs-sub);
   line-height: 1.5;
   overflow-x: auto;
@@ -2850,7 +2908,7 @@ a:hover {
   width: 16px;
   height: 16px;
   margin: 0;
-  accent-color: var(--ink);
+  accent-color: var(--lime);
 }
 
 .notify-field input[type='checkbox']:disabled {
@@ -3017,7 +3075,7 @@ a:hover {
   align-items: flex-start;
   justify-content: center;
   padding: 12vh 16px 16px;
-  background: rgb(21 23 15 / 45%);
+  background: rgba(4, 6, 18, 0.6);
   backdrop-filter: blur(3px);
 }
 
@@ -3082,6 +3140,10 @@ a:hover {
   background: var(--lime);
 }
 
+/* the active row is a gold fill: the label drops to ink on it */
+.cmdk-item.active .cmdk-label {
+  color: var(--ink);
+}
 .cmdk-label {
   font-size: var(--fs-body);
   font-weight: 600;
@@ -3145,7 +3207,7 @@ a:hover {
 
 .composer-tool:hover {
   background: var(--paper-3);
-  color: var(--ink);
+  color: var(--text);
 }
 
 .emoji-pop {
@@ -3313,13 +3375,13 @@ a:hover {
   gap: 10px;
   margin-bottom: 6px;
   padding: 7px 10px;
-  border-left: 2px solid var(--ink);
+  border-left: 2px solid var(--lime);
   background: var(--paper-3);
   border-radius: 0 var(--r-sm) var(--r-sm) 0;
 }
 
 .edit-bar .reply-label {
-  color: var(--ink);
+  color: var(--lime);
   font-weight: 600;
 }
 
@@ -3363,7 +3425,7 @@ a:hover {
 .pin-card:hover,
 .pin-card:focus-within {
   border-color: var(--line-strong);
-  background: var(--white);
+  background: var(--paper-3);
 }
 
 .pin-jump {
@@ -3435,7 +3497,7 @@ a:hover {
 }
 
 /* ============================================================
-   Glass release — frosted material over an ambient canvas.
+   Glass release — frosted material over the star field.
    Rules:
    - backdrop-filter lives ONLY on fixed-layer containers
      (sidebar, topbar, composer bar, floating pops/pills,
@@ -3444,37 +3506,40 @@ a:hover {
      the translucent one, so browsers without backdrop-filter
      still get a readable solid surface.
    - Text on glass always uses --text/--muted/--on-ink, never the
-     translucent tint itself, so contrast holds in both themes.
+     translucent tint itself.
+   - Translucency comes from the night surfaces themselves
+     (rgba(16,21,42,.86~.92 raised / rgba(22,28,54,.86~.94 rail)
+     so the stars stay dim and legible behind every bar.
    ============================================================ */
 
 :root {
   --glass-blur: 18px;
   --glass-blur-sm: 12px;
   --glass-sat: 1.45;
-  --glass-bar: rgba(246, 244, 236, 0.78);
-  --glass-bar-strong: rgba(251, 250, 245, 0.86);
-  --glass-ink: rgba(21, 23, 15, 0.74);
-  --glass-ink-strong: rgba(21, 23, 15, 0.86);
-  --glass-pop: rgba(251, 250, 245, 0.88);
-  --glass-side: rgba(238, 236, 224, 0.8);
-  --glass-hi: rgba(255, 255, 255, 0.6);
-  --glass-hi-ink: rgba(246, 244, 236, 0.14);
-  --glass-ring: 0 0 0 3px rgba(216, 242, 74, 0.35);
-  --glass-shadow: 0 12px 32px rgba(21, 23, 15, 0.16);
-  color-scheme: light dark;
+  --glass-bar: rgba(16, 21, 42, 0.86);
+  --glass-bar-strong: rgba(16, 21, 42, 0.92);
+  --glass-ink: rgba(22, 28, 54, 0.88);
+  --glass-ink-strong: rgba(22, 28, 54, 0.94);
+  --glass-pop: rgba(16, 21, 42, 0.92);
+  --glass-side: rgba(22, 28, 54, 0.86);
+  --glass-hi: rgba(236, 233, 226, 0.08);
+  --glass-hi-ink: rgba(236, 233, 226, 0.14);
+  --glass-ring: 0 0 0 3px rgba(217, 178, 106, 0.32);
+  --glass-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
 }
 
-/* ---- ambient canvas: the wash glass bars float over ---- */
+/* ---- ambient canvas: the fixed starfield IS the canvas ----
+   html carries the deep-indigo base; everything below body stays
+   transparent so .sky (SkyField.vue) shows through. Glass bars
+   float over the stars, messages drift on top of them. */
 
 body {
-  background:
-    radial-gradient(1100px 520px at 82% -8%, rgba(216, 242, 74, 0.16), transparent 62%),
-    radial-gradient(860px 480px at -8% 108%, rgba(180, 83, 31, 0.1), transparent 58%),
-    radial-gradient(700px 500px at 108% 108%, rgba(69, 116, 74, 0.08), transparent 60%),
-    var(--paper);
-  background-attachment: fixed;
+  background: transparent;
 }
 
+.app-layout,
+.rooms-layout,
+.welcome-pane,
 .chat-layout,
 .chat-main,
 .messages-pane,
@@ -3490,7 +3555,7 @@ body {
   -webkit-backdrop-filter: blur(22px) saturate(1.35);
   backdrop-filter: blur(22px) saturate(1.35);
   border-right: 1px solid var(--glass-hi-ink);
-  box-shadow: inset -1px 0 0 rgba(246, 244, 236, 0.06);
+  box-shadow: inset -1px 0 0 rgba(236, 233, 226, 0.06);
 }
 
 .sidebar-search input {
@@ -3527,7 +3592,7 @@ body {
   background: var(--glass-bar);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
-  box-shadow: inset 0 1px 0 var(--glass-hi), 0 8px 24px rgba(21, 23, 15, 0.06);
+  box-shadow: inset 0 1px 0 var(--glass-hi), 0 8px 24px rgba(0, 0, 0, 0.25);
 }
 
 /* ---- composer: frosted bar + lime focus ring ---- */
@@ -3542,11 +3607,11 @@ body {
   background: var(--glass-bar-strong);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
-  box-shadow: inset 0 1px 0 var(--glass-hi), 0 8px 24px rgba(21, 23, 15, 0.08);
+  box-shadow: inset 0 1px 0 var(--glass-hi), 0 8px 24px rgba(0, 0, 0, 0.25);
 }
 
 .composer:focus-within {
-  border-color: var(--ink);
+  border-color: var(--lime);
   box-shadow: var(--glass-ring), inset 0 1px 0 var(--glass-hi);
 }
 
@@ -3561,15 +3626,15 @@ body {
 .composer-tool:hover {
   background: var(--paper-3);
   border-color: var(--line-strong);
-  color: var(--ink);
+  color: var(--text);
 }
 
 .send-btn {
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 1px 2px rgba(21, 23, 15, 0.2);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 1px 2px rgba(0, 0, 0, 0.25);
 }
 
 .send-btn:focus-visible {
-  outline: 2px solid var(--ink);
+  outline: 2px solid var(--text);
   outline-offset: 2px;
   box-shadow: var(--glass-ring);
 }
@@ -3595,7 +3660,7 @@ body {
   -webkit-backdrop-filter: blur(20px) saturate(1.5);
   backdrop-filter: blur(20px) saturate(1.5);
   border: 1px solid var(--line-strong);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), var(--glass-shadow);
+  box-shadow: inset 0 1px 0 rgba(236, 233, 226, 0.12), var(--glass-shadow);
 }
 
 .mention-pop {
@@ -3621,7 +3686,7 @@ body {
   backdrop-filter: blur(var(--glass-blur-sm)) saturate(1.5);
   border: 1px solid var(--line-strong);
   border-radius: var(--r-md);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), var(--glass-shadow);
+  box-shadow: inset 0 1px 0 rgba(236, 233, 226, 0.12), var(--glass-shadow);
 }
 
 .msg.self .msg-actions {
@@ -3636,7 +3701,7 @@ body {
 
 .msg-actions .msg-action:hover {
   background: var(--paper-3);
-  color: var(--ink);
+  color: var(--text);
 }
 
 /* ---- jump-to-bottom: frosted ink pill over the scroll ---- */
@@ -3648,7 +3713,7 @@ body {
   backdrop-filter: blur(var(--glass-blur-sm)) saturate(1.3);
   border: 1px solid var(--glass-hi-ink);
   color: var(--on-ink);
-  box-shadow: inset 0 1px 0 rgba(246, 244, 236, 0.12), var(--glass-shadow);
+  box-shadow: inset 0 1px 0 rgba(236, 233, 226, 0.12), var(--glass-shadow);
 }
 
 .jump-bottom:hover {
@@ -3666,11 +3731,11 @@ body {
 }
 
 .room-search-bar {
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  box-shadow: inset 0 1px 0 rgba(236, 233, 226, 0.1);
 }
 
 .room-search-bar:focus-within {
-  border-color: var(--ink);
+  border-color: var(--lime);
   box-shadow: var(--glass-ring);
 }
 
@@ -3682,7 +3747,7 @@ body {
 /* ---- command palette: frosted dialog over blurred page ---- */
 
 .cmdk-overlay {
-  background: rgba(21, 23, 15, 0.38);
+  background: rgba(4, 6, 18, 0.55);
   -webkit-backdrop-filter: blur(6px) saturate(1.2);
   backdrop-filter: blur(6px) saturate(1.2);
 }
@@ -3694,7 +3759,7 @@ body {
   backdrop-filter: blur(24px) saturate(1.5);
   border: 1px solid var(--line-strong);
   border-radius: var(--r-lg);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), var(--shadow-dialog);
+  box-shadow: inset 0 1px 0 rgba(236, 233, 226, 0.12), var(--shadow-dialog);
 }
 
 .cmdk-label {
@@ -3714,7 +3779,7 @@ body {
   -webkit-backdrop-filter: blur(24px) saturate(1.5);
   backdrop-filter: blur(24px) saturate(1.5);
   border: 1px solid var(--line-strong);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), var(--shadow-dialog);
+  box-shadow: inset 0 1px 0 rgba(236, 233, 226, 0.12), var(--shadow-dialog);
 }
 
 .el-drawer {
@@ -3723,7 +3788,7 @@ body {
   -webkit-backdrop-filter: blur(24px) saturate(1.5);
   backdrop-filter: blur(24px) saturate(1.5);
   border-left: 1px solid var(--line-strong);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), var(--shadow-dialog);
+  box-shadow: inset 0 1px 0 rgba(236, 233, 226, 0.12), var(--shadow-dialog);
 }
 
 .el-drawer.ltr {
@@ -3741,7 +3806,7 @@ body {
   -webkit-backdrop-filter: blur(16px) saturate(1.4);
   backdrop-filter: blur(16px) saturate(1.4);
   border: 1px solid var(--line-strong);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), var(--glass-shadow);
+  box-shadow: inset 0 1px 0 rgba(236, 233, 226, 0.12), var(--glass-shadow);
 }
 
 /* ---- unread divider: lime rule + glowing pill ---- */
@@ -3766,8 +3831,8 @@ body {
 .unread-label {
   height: 20px;
   padding: 0 10px;
-  border: 1px solid rgba(21, 23, 15, 0.14);
-  box-shadow: 0 2px 10px rgba(190, 210, 50, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.55);
+  border: 1px solid rgba(10, 14, 28, 0.35);
+  box-shadow: 0 2px 10px rgba(217, 178, 106, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.3);
   white-space: nowrap;
 }
 
@@ -3788,15 +3853,15 @@ body {
   font-size: var(--fs-mono);
   letter-spacing: 0.06em;
   white-space: nowrap;
-  box-shadow: 0 1px 2px rgba(21, 23, 15, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(236, 233, 226, 0.08);
 }
 
 /* ---- avatars: top-light sheen + drop shadow ---- */
 
 .avatar {
-  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0) 55%);
-  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.28), inset 0 -1px 1px rgba(21, 23, 15, 0.18),
-    0 1px 2px rgba(21, 23, 15, 0.16);
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0) 55%);
+  box-shadow: inset 0 1px 1px rgba(236, 233, 226, 0.14), inset 0 -1px 1px rgba(0, 0, 0, 0.3),
+    0 1px 2px rgba(0, 0, 0, 0.4);
 }
 
 /* ---- presence: lime dot with halo ring ---- */
@@ -3804,7 +3869,7 @@ body {
 .presence-dot.online {
   background: var(--lime);
   border-color: var(--lime);
-  box-shadow: 0 0 0 2px var(--paper-3), 0 0 8px rgba(160, 190, 40, 0.8);
+  box-shadow: 0 0 0 2px var(--paper-3), 0 0 8px rgba(217, 178, 106, 0.6);
 }
 
 /* ---- scrollbars: inset-track thumb with hover ---- */
@@ -3834,8 +3899,8 @@ body {
   height: 60px;
   border: 1px dashed var(--line-strong);
   border-radius: var(--r-md);
-  background: linear-gradient(180deg, rgba(216, 242, 74, 0.22), var(--paper-3));
-  box-shadow: 0 4px 14px rgba(21, 23, 15, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  background: linear-gradient(180deg, rgba(217, 178, 106, 0.14), var(--paper-3));
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(236, 233, 226, 0.08);
 }
 
 .message-empty > div:nth-child(2) {
@@ -3850,11 +3915,11 @@ body {
 }
 
 .btn.primary {
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 1px 2px rgba(21, 23, 15, 0.2);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 1px 2px rgba(0, 0, 0, 0.25);
 }
 
 .btn.primary:focus-visible {
-  outline: 2px solid var(--ink);
+  outline: 2px solid var(--text);
   outline-offset: 2px;
   box-shadow: var(--glass-ring);
 }
@@ -3867,7 +3932,7 @@ body {
 .field textarea:focus,
 .field select:focus,
 .auth-card input:focus {
-  border-color: var(--ink);
+  border-color: var(--lime);
   box-shadow: var(--glass-ring);
   outline: none;
 }
@@ -3886,12 +3951,12 @@ body {
 }
 
 .pin-card {
-  box-shadow: 0 1px 2px rgba(21, 23, 15, 0.05);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
 }
 
 .pin-card:hover,
 .pin-card:focus-within {
-  box-shadow: 0 4px 14px rgba(21, 23, 15, 0.1);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
 }
 
 .search-result {
@@ -3903,86 +3968,25 @@ body {
 }
 
 .search-result:focus-visible {
-  outline: 2px solid var(--ink);
+  outline: 2px solid var(--lime);
   outline-offset: -2px;
-}
-
-/* ---- dark theme: same material, inverted canvas ---- */
-
-/* Explicit choice wins over the OS. index.html sets data-theme before first
-   paint; theme.ts keeps it in sync afterwards. Default (light) stays on :root. */
-:root[data-theme='light'] {
-  color-scheme: light;
-}
-
-:root[data-theme='dark'] {
-  color-scheme: dark;
-  --ink: #0e100a;
-  --ink-2: #1a1d12;
-  --ink-3: #262a18;
-  --paper: #1d2015;
-  --paper-2: #242817;
-  --paper-3: #2e3321;
-  --white: #242817;
-  --line: #3a3f2a;
-  --line-strong: #585e43;
-  --line-on-ink: rgba(246, 244, 236, 0.16);
-  --text: #f0eee1;
-  --muted: #c4bfa7;
-  --faint: #aaa68e;
-  --on-ink: #f6f4ec;
-  --on-ink-muted: #b3ae9c;
-  --on-ink-dim: #9c9885;
-  --rust: #d08a4e;
-  --rust-ink: #e2a468;
-  --danger: #e88d86;
-  --danger-soft: #3a2320;
-  --glass-bar: rgba(29, 32, 21, 0.78);
-  --glass-bar-strong: rgba(36, 40, 23, 0.86);
-  --glass-ink: rgba(9, 11, 5, 0.72);
-  --glass-ink-strong: rgba(9, 11, 5, 0.86);
-  --glass-pop: rgba(36, 40, 23, 0.88);
-  --glass-side: rgba(46, 51, 33, 0.72);
-  --glass-hi: rgba(246, 244, 236, 0.1);
-  --glass-hi-ink: rgba(246, 244, 236, 0.14);
-  --glass-ring: 0 0 0 3px rgba(216, 242, 74, 0.3);
-  --glass-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
-  --el-fill-color: #2e3321;
-  --el-fill-color-light: #2e3321;
-  --el-fill-color-lighter: #242817;
-  --el-fill-color-blank: #242817;
-  --el-color-primary-dark-2: #8a8f70;
-  --el-color-primary-light-3: #6a6e55;
-  --el-color-primary-light-5: #585e43;
-  --el-color-primary-light-7: #3a3f2a;
-  --el-color-primary-light-8: #2e3321;
-  --el-color-primary-light-9: #242817;
-}
-
-:root[data-theme='dark'] body {
-  background:
-    radial-gradient(1100px 520px at 82% -8%, rgba(216, 242, 74, 0.1), transparent 62%),
-    radial-gradient(860px 480px at -8% 108%, rgba(208, 138, 78, 0.1), transparent 58%),
-    var(--paper);
-}
-
-:root[data-theme='dark'] .msg.self .bubble-content :not(pre) > code {
-  background: rgba(21, 23, 15, 0.09);
-}
-
-:root[data-theme='dark'] .avatar {
-  box-shadow: inset 0 1px 1px rgba(246, 244, 236, 0.2), inset 0 -1px 1px rgba(0, 0, 0, 0.4),
-    0 1px 2px rgba(0, 0, 0, 0.5);
-}
-
-:root[data-theme='dark'] .presence-dot.online {
-  box-shadow: 0 0 0 2px var(--paper-3), 0 0 8px rgba(200, 225, 80, 0.7);
 }
 
 /* ---- reduced transparency + no-backdrop fallbacks: solid surfaces ---- */
 
 @media (prefers-reduced-transparency: reduce) {
+  .sky {
+    display: none;
+  }
+
+  .app-layout,
+  .rooms-layout,
+  .welcome-pane {
+    background: var(--paper);
+  }
+
   .sidebar,
+  .auth-rail,
   .chat-topbar,
   .composer,
   .composer-tool,
@@ -3999,13 +4003,15 @@ body {
   .el-dialog,
   .el-drawer,
   .el-message,
+  .auth-card,
   .connection-banner {
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
 
   .sidebar,
-  .el-drawer.ltr {
+  .el-drawer.ltr,
+  .auth-rail {
     background: var(--ink);
   }
 
@@ -4023,7 +4029,8 @@ body {
   .cmdk,
   .el-dialog,
   .el-drawer,
-  .el-message {
+  .el-message,
+  .auth-card {
     background: var(--paper-2);
   }
 
@@ -4037,13 +4044,14 @@ body {
 
   .cmdk-overlay,
   .el-overlay {
-    background: rgba(21, 23, 15, 0.55);
+    background: rgba(4, 6, 18, 0.7);
   }
 }
 
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .sidebar,
-  .el-drawer.ltr {
+  .el-drawer.ltr,
+  .auth-rail {
     background: var(--ink);
   }
 
@@ -4061,7 +4069,8 @@ body {
   .cmdk,
   .el-dialog,
   .el-drawer,
-  .el-message {
+  .el-message,
+  .auth-card {
     background: var(--paper-2);
   }
 

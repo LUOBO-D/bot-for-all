@@ -949,7 +949,7 @@ function onRowKeydown(event: KeyboardEvent, item: NotificationItem) {
   backdrop-filter: blur(20px) saturate(1.5);
   border: 1px solid var(--line-strong);
   border-radius: var(--r-lg);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), var(--glass-shadow);
+  box-shadow: inset 0 1px 0 rgba(236, 233, 226, 0.12), var(--glass-shadow);
   outline: none;
   overflow: hidden;
 }
@@ -1295,8 +1295,8 @@ function onRowKeydown(event: KeyboardEvent, item: NotificationItem) {
   height: 16px;
   padding: 0 4px;
   border-radius: 8px;
-  background: rgba(28, 32, 24, 0.07);
-  color: var(--ink);
+  background: rgba(236, 233, 226, 0.1);
+  color: var(--text);
   font-size: 11px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
@@ -1313,8 +1313,8 @@ function onRowKeydown(event: KeyboardEvent, item: NotificationItem) {
 }
 
 .notif-filter.active {
-  background: rgba(216, 242, 74, 0.28);
-  color: var(--ink);
+  background: var(--accent-soft);
+  color: var(--lime);
 }
 
 /* The underline keeps the selection legible where the lime tint is faint. */
@@ -1397,11 +1397,11 @@ function onRowKeydown(event: KeyboardEvent, item: NotificationItem) {
 }
 
 .notif-item.unread {
-  background: rgba(216, 242, 74, 0.16);
+  background: rgba(217, 178, 106, 0.12);
 }
 
 .notif-item.unread:hover {
-  background: rgba(216, 242, 74, 0.26);
+  background: rgba(217, 178, 106, 0.2);
 }
 
 /* The row is a div (a button cannot nest the delete button), so it carries its

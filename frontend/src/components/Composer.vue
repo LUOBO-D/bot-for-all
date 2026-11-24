@@ -1212,7 +1212,7 @@ function onKeydown(event: KeyboardEvent) {
 
 .record-tool.recording {
   border-color: var(--rust);
-  background: rgba(180, 83, 31, 0.1);
+  background: rgba(200, 80, 60, 0.14);
   color: var(--rust);
 }
 
@@ -1272,7 +1272,7 @@ function onKeydown(event: KeyboardEvent) {
 }
 
 .attach-chip-remove:hover {
-  background: rgba(21, 23, 15, 0.1);
+  background: rgba(236, 233, 226, 0.08);
   color: var(--rust);
 }
 

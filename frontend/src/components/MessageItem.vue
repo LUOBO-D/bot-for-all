@@ -1391,10 +1391,10 @@ onBeforeUnmount(() => {
   outline-offset: 1px;
 }
 
-/* Lime self bubbles would glare with the paper well, so tint the ink instead. */
+/* Gold self bubbles keep their sub-cards as ink tints, not paper wells. */
 .msg.self .translation {
   border-left-color: var(--ink-2);
-  background: rgba(21, 23, 15, 0.08);
+  background: rgba(22, 28, 54, 0.08);
   color: var(--ink);
 }
 
@@ -1424,7 +1424,7 @@ onBeforeUnmount(() => {
   padding: 1px 8px 1px 6px;
   border-left: 2px solid var(--rust);
   border-radius: 0 var(--r-sm) var(--r-sm) 0;
-  background: rgba(21, 23, 15, 0.05);
+  background: var(--paper-3);
   color: var(--muted);
   font-size: var(--fs-mono);
   font-family: var(--font-mono);
@@ -1440,9 +1440,9 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-/* Lime self bubbles need the darker ink tint to keep the label legible. */
+/* Gold self bubbles need the ink tint to keep the label legible. */
 .msg.self .forward-tag {
-  background: rgba(21, 23, 15, 0.09);
+  background: rgba(22, 28, 54, 0.1);
   color: var(--ink-2);
   border-left-color: var(--ink-2);
 }
@@ -1511,11 +1511,11 @@ onBeforeUnmount(() => {
   color: var(--rust);
 }
 
-/* Lime self bubbles: the paper well would glare, so tint the ink instead. */
+/* Gold self bubbles: the paper well would glare, so tint the ink instead. */
 .msg.self .link-preview {
-  border-color: rgba(21, 23, 15, 0.16);
+  border-color: rgba(22, 28, 54, 0.28);
   border-left-color: var(--ink-2);
-  background: rgba(21, 23, 15, 0.08);
+  background: rgba(22, 28, 54, 0.08);
   color: var(--ink);
 }
 

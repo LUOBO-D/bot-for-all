@@ -6,6 +6,7 @@ import CommandPalette from './components/CommandPalette.vue';
 import DraftsDialog from './components/DraftsDialog.vue';
 import SavedMessagesDialog from './components/SavedMessagesDialog.vue';
 import ShortcutsDialog from './components/ShortcutsDialog.vue';
+import SkyField from './components/SkyField.vue';
 import OfflineGate from './components/OfflineGate.vue';
 import { useAuthStore } from './stores/auth';
 import { useChatStore } from './stores/chat';
@@ -150,6 +151,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
 </script>
 
 <template>
+  <SkyField />
   <div class="app-shell">
     <OfflineGate v-if="offlineBlocked" />
     <template v-else>
@@ -177,9 +179,25 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   height: 100%;
+  /* 进房首帧星幕亮起: one-shot 400ms reveal on app mount — CSS only,
+     plays once, never on route changes (the shell never remounts).
+     SkyField rises in step behind it (.sky's own sky-rise). */
+  animation: app-rise 0.4s ease-out both;
+}
+
+@keyframes app-rise {
+  from {
+    opacity: 0;
+  }
 }
 
 .app-body {
   min-height: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-shell {
+    animation: none;
+  }
 }
 </style>

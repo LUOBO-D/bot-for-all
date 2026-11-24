@@ -1091,7 +1091,7 @@ onBeforeUnmount(() => {
 }
 
 .mark-all-read:hover {
-  background: rgba(216, 242, 74, 0.14);
+  background: rgba(217, 178, 106, 0.12);
 }
 
 .mark-all-read:disabled {
@@ -1120,7 +1120,7 @@ onBeforeUnmount(() => {
 }
 
 .filter-chip.active {
-  background: rgba(216, 242, 74, 0.14);
+  background: rgba(217, 178, 106, 0.14);
   color: var(--lime);
 }
 
