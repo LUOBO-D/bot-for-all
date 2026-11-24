@@ -1,6 +1,7 @@
 import http from 'node:http';
 import { createApp } from './app';
 import { closeCaptchaRedis, initCaptchaRedis } from './auth/captcha';
+import { closeBotBus, initBotBus } from './bot/bus';
 import { createBotGateway } from './bot/gateway';
 import { closeSafeAgent } from './bot/safe-fetch';
 import { config } from './config';
@@ -27,6 +28,7 @@ async function main(): Promise<void> {
       initRateLimitRedis(config.redisUrl),
       initPresenceRedis(config.redisUrl),
       initCaptchaRedis(config.redisUrl),
+      initBotBus(config.redisUrl),
     ]);
   }
   const app = createApp();
@@ -119,6 +121,7 @@ async function main(): Promise<void> {
         })
         // Never throws; logs a warning and moves on.
         .then(() => detachRedisAdapter())
+        .then(() => closeBotBus())
         .then(() => closeRateLimitRedis())
         .then(() => closePresenceRedis())
         .then(() => closeCaptchaRedis())

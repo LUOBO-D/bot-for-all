@@ -3,9 +3,32 @@ import { safeFetch } from './safe-fetch';
 import { responseTooLargeError, SseParser } from './sse';
 import { assertSafeBotUrl } from './url';
 
+/** A function-call schema in the OpenAI wire format. */
+export interface ToolFunctionSpec {
+  type: 'function';
+  function: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  };
+}
+
+/** A function call emitted by a tool-capable model, in wire format. */
+export interface ToolCallPayload {
+  id: string;
+  type: 'function';
+  function: { name: string; arguments: string };
+}
+
 export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant';
+  role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
+  /** Assistant-role only: the calls a tool-capable round emitted. */
+  tool_calls?: ToolCallPayload[];
+  /** Tool-role only: the id of the assistant tool_call this message answers. */
+  tool_call_id?: string;
+  /** Tool-role only: the function name, for providers that display it. */
+  name?: string;
 }
 
 export interface StreamOptions {
@@ -16,6 +39,8 @@ export interface StreamOptions {
   temperature: number;
   maxTokens: number;
   extraBody?: Record<string, unknown> | null;
+  /** When set, `tools` + `tool_choice: "auto"` join the request body. */
+  tools?: ToolFunctionSpec[] | null;
   signal?: AbortSignal;
 }
 
@@ -51,7 +76,7 @@ function endpointFor(baseUrl: string): string {
 }
 
 function requestBody(options: StreamOptions, stream: boolean): Record<string, unknown> {
-  return {
+  const body: Record<string, unknown> = {
     ...(options.extraBody ?? {}),
     model: options.model,
     messages: options.messages,
@@ -59,6 +84,17 @@ function requestBody(options: StreamOptions, stream: boolean): Record<string, un
     temperature: options.temperature,
     max_tokens: options.maxTokens,
   };
+  // Tool declarations follow the platform switch in BOTH directions: on →
+  // the built-in tools (overriding a stale `tools` in extraBody), off →
+  // none survive an extraBody override.
+  if (options.tools && options.tools.length > 0) {
+    body.tools = options.tools;
+    body.tool_choice = 'auto';
+  } else {
+    delete body.tools;
+    delete body.tool_choice;
+  }
+  return body;
 }
 
 function requestInit(options: StreamOptions, stream: boolean, signal: AbortSignal): RequestInit {
@@ -261,7 +297,127 @@ export async function completeOnce(options: StreamOptions): Promise<string> {
   return readNonStream(options, signal);
 }
 
-export async function* streamChat(options: StreamOptions): AsyncGenerator<string> {
+/** What one streaming turn yields: text pieces, then the model's tool calls. */
+export type StreamEvent =
+  | { type: 'delta'; text: string }
+  | { type: 'tool_calls'; calls: ToolCallPayload[] };
+
+/** One fragment of `choices[0].delta.tool_calls`, in whatever shape arrived. */
+interface ToolCallFragment {
+  index: number;
+  id: string;
+  name: string;
+  arguments: string;
+}
+
+/**
+ * Pulls the tool-call fragments out of one SSE payload. OpenAI streams open a
+ * call on its first fragment (`index`, `id`, `function.name`) and continue it
+ * with `function.arguments` pieces; payloads without tool calls return null.
+ */
+function extractDeltaToolCalls(value: unknown): ToolCallFragment[] | null {
+  if (typeof value !== 'object' || value === null || !('choices' in value)) {
+    return null;
+  }
+  const choices = value.choices;
+  if (!Array.isArray(choices) || choices.length === 0) {
+    return null;
+  }
+  const first: unknown = choices[0];
+  if (typeof first !== 'object' || first === null || !('delta' in first)) {
+    return null;
+  }
+  const delta = first.delta;
+  if (typeof delta !== 'object' || delta === null || !('tool_calls' in delta)) {
+    return null;
+  }
+  const rawCalls = delta.tool_calls;
+  if (!Array.isArray(rawCalls)) {
+    return null;
+  }
+  const fragments: ToolCallFragment[] = [];
+  for (const raw of rawCalls) {
+    if (typeof raw !== 'object' || raw === null) {
+      continue;
+    }
+    // `function` carries the name on the opening fragment only; argument
+    // pieces arrive without it.
+    const fn =
+      'function' in raw &&
+      typeof raw.function === 'object' &&
+      raw.function !== null
+        ? raw.function
+        : null;
+    fragments.push({
+      index: 'index' in raw && typeof raw.index === 'number' ? raw.index : 0,
+      id: 'id' in raw && typeof raw.id === 'string' ? raw.id : '',
+      name: fn !== null && 'name' in fn && typeof fn.name === 'string' ? fn.name : '',
+      arguments:
+        fn !== null && 'arguments' in fn && typeof fn.arguments === 'string'
+          ? fn.arguments
+          : '',
+    });
+  }
+  return fragments;
+}
+
+interface ToolCallDraft {
+  id: string;
+  name: string;
+  arguments: string;
+}
+
+/** Accumulates streamed fragments into whole function calls, keyed by index. */
+class ToolCallCollector {
+  private readonly drafts = new Map<number, ToolCallDraft>();
+
+  absorb(value: unknown): void {
+    const fragments = extractDeltaToolCalls(value);
+    if (fragments === null) {
+      return;
+    }
+    for (const fragment of fragments) {
+      const draft = this.drafts.get(fragment.index) ?? { id: '', name: '', arguments: '' };
+      if (fragment.id) {
+        draft.id = fragment.id;
+      }
+      if (fragment.name) {
+        draft.name = fragment.name;
+      }
+      draft.arguments += fragment.arguments;
+      this.drafts.set(fragment.index, draft);
+    }
+  }
+
+  /** Whole calls in index order; providers that omit `id` get a stable one. */
+  finish(): ToolCallPayload[] {
+    return [...this.drafts.entries()]
+      .sort(([a], [b]) => a - b)
+      .filter(([, draft]) => draft.name !== '')
+      .map(([index, draft]) => ({
+        id: draft.id || `call_${index}`,
+        type: 'function' as const,
+        function: { name: draft.name, arguments: draft.arguments },
+      }));
+  }
+}
+
+/** Parses one SSE payload into delta events, harvesting tool-call fragments. */
+function* processPayload(toolCalls: ToolCallCollector, payload: string): Generator<StreamEvent> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(payload);
+  } catch {
+    return;
+  }
+  toolCalls.absorb(parsed);
+  const text = extractDeltaContent(parsed);
+  if (text) {
+    yield { type: 'delta', text };
+  }
+}
+
+export async function* streamChat(options: StreamOptions): AsyncGenerator<StreamEvent> {
   const signal = options.signal
     ? AbortSignal.any([options.signal, AbortSignal.timeout(config.botTimeoutMs)])
     : AbortSignal.timeout(config.botTimeoutMs);
@@ -277,7 +433,7 @@ export async function* streamChat(options: StreamOptions): AsyncGenerator<string
       throw new ProviderRateError('Provider rate limited', response.status);
     }
     if ([400, 404, 405, 415, 422].includes(response.status)) {
-      yield await readNonStream(options, signal);
+      yield { type: 'delta', text: await readNonStream(options, signal) };
       return;
     }
     throw new ProviderError(`Provider error ${response.status}: ${text}`, response.status);
@@ -285,7 +441,7 @@ export async function* streamChat(options: StreamOptions): AsyncGenerator<string
 
   const contentType = response.headers.get('content-type') ?? '';
   if (!contentType.includes('text/event-stream')) {
-    yield await readSuccessBody(response);
+    yield { type: 'delta', text: await readSuccessBody(response) };
     return;
   }
 
@@ -299,25 +455,16 @@ export async function* streamChat(options: StreamOptions): AsyncGenerator<string
     maxBufferBytes: config.botMaxSseEventBytes,
     maxEventBytes: config.botMaxSseEventBytes,
   });
-
-  const emit = (payload: string): string | null => {
-    if (payload === '[DONE]') {
-      return null;
-    }
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(payload);
-    } catch {
-      return null;
-    }
-    return extractDeltaContent(parsed);
-  };
+  // The content path through `extractDeltaContent` is untouched; tool-call
+  // fragments reassemble on the side and surface once, after the stream ends.
+  const toolCalls = new ToolCallCollector();
 
   // Counted on raw bytes actually read from the socket, so SSE framing,
   // comments and ignored events all consume the same budget.
   let totalBytes = 0;
   try {
-    while (true) {
+    let sawDone = false;
+    outer: while (true) {
       const { done, value } = await reader.read();
       if (done) {
         break;
@@ -331,26 +478,29 @@ export async function* streamChat(options: StreamOptions): AsyncGenerator<string
       const chunk = decoder.decode(value, { stream: true });
       for (const payload of parser.feed(chunk)) {
         if (payload === '[DONE]') {
-          return;
+          sawDone = true;
+          break outer;
         }
-        const text = emit(payload);
-        if (text) {
-          yield text;
+        yield* processPayload(toolCalls, payload);
+      }
+    }
+
+    if (!sawDone) {
+      const tail = decoder.decode();
+      if (tail) {
+        for (const payload of parser.feed(tail)) {
+          if (payload === '[DONE]') {
+            sawDone = true;
+            break;
+          }
+          yield* processPayload(toolCalls, payload);
         }
       }
     }
 
-    const tail = decoder.decode();
-    if (tail) {
-      for (const payload of parser.feed(tail)) {
-        if (payload === '[DONE]') {
-          return;
-        }
-        const text = emit(payload);
-        if (text) {
-          yield text;
-        }
-      }
+    const calls = toolCalls.finish();
+    if (calls.length > 0) {
+      yield { type: 'tool_calls', calls };
     }
   } finally {
     // Also runs on [DONE]/consumer return, releasing the socket promptly

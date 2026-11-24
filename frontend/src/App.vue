@@ -6,11 +6,18 @@ import CommandPalette from './components/CommandPalette.vue';
 import DraftsDialog from './components/DraftsDialog.vue';
 import SavedMessagesDialog from './components/SavedMessagesDialog.vue';
 import ShortcutsDialog from './components/ShortcutsDialog.vue';
+import OfflineGate from './components/OfflineGate.vue';
+import { useAuthStore } from './stores/auth';
 import { useChatStore } from './stores/chat';
 import type { RoomSummary } from './types';
 
 const route = useRoute();
 const router = useRouter();
+const auth = useAuthStore();
+
+// A boot-time /auth/me failure keeps the token and flags the session offline;
+// until a retry succeeds there is no user and nothing renders behind the gate.
+const offlineBlocked = computed(() => auth.offline && !!auth.token);
 const chat = useChatStore();
 
 const paletteOpen = ref(false);
@@ -144,19 +151,22 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
 
 <template>
   <div class="app-shell">
-    <AnnouncementBanner />
-    <div class="app-body">
-      <router-view />
-    </div>
-    <CommandPalette
-      v-model="paletteOpen"
-      @shortcuts="shortcutsOpen = true"
-      @saved="savedOpen = true"
-      @drafts="draftsOpen = true"
-    />
-    <SavedMessagesDialog v-model="savedOpen" />
-    <DraftsDialog v-model="draftsOpen" />
-    <ShortcutsDialog v-model="shortcutsOpen" />
+    <OfflineGate v-if="offlineBlocked" />
+    <template v-else>
+      <AnnouncementBanner />
+      <div class="app-body">
+        <router-view />
+      </div>
+      <CommandPalette
+        v-model="paletteOpen"
+        @shortcuts="shortcutsOpen = true"
+        @saved="savedOpen = true"
+        @drafts="draftsOpen = true"
+      />
+      <SavedMessagesDialog v-model="savedOpen" />
+      <DraftsDialog v-model="draftsOpen" />
+      <ShortcutsDialog v-model="shortcutsOpen" />
+    </template>
   </div>
 </template>
 

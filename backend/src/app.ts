@@ -24,6 +24,18 @@ const SECURITY_HEADERS: Readonly<Record<string, string>> = {
   'Referrer-Policy': 'no-referrer',
   'Cross-Origin-Opener-Policy': 'same-origin',
   'Permissions-Policy': 'camera=(), microphone=(self), geolocation=()',
+  // Mirrors frontend/nginx.conf. Both send the identical policy so responses
+  // carry it even when the backend is reached without the Nginx proxy; through
+  // the proxy the duplicate header just enforces the same value twice.
+  // The sha256 pins the theme-boot inline script in frontend/index.html (it
+  // survives the Vite build verbatim) — every other script ships from /assets
+  // after the hash. Inline <style> and Element Plus/Vue style attributes need
+  // style-src 'unsafe-inline'; data:/blob: cover the captcha SVG and the
+  // object-URL attachments/avatars/voice; https: on img-/media-src lets
+  // markdown messages reference remote images (lightbox) and media;
+  // ws:/wss: cover the same-origin Socket.IO connection.
+  'Content-Security-Policy':
+    "default-src 'self'; script-src 'self' 'sha256-heFDH7JFx3Q+Tw3QesfP7cXT8wr8z/tkNpVLBm3NYUM='; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob: https:; font-src 'self'; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'",
 };
 
 const HSTS_HEADER = 'max-age=31536000; includeSubDomains';

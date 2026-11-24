@@ -103,6 +103,40 @@ export const envSchema = z.object({
     .min(16 * 1024)
     .max(1024 * 1024)
     .default(256 * 1024),
+  /**
+   * Optional web tools for bot replies. `none` (default) keeps requests free
+   * of `tools`; `duckduckgo` needs no key, while `brave`/`tavily` additionally
+   * require WEB_SEARCH_API_KEY and stay disabled without one (mirroring the
+   * partially-configured translation provider).
+   */
+  WEB_SEARCH_PROVIDER: z
+    .string()
+    .trim()
+    .default('none')
+    .transform((value) => value.toLowerCase())
+    .refine(
+      (value) => ['none', 'duckduckgo', 'brave', 'tavily'].includes(value),
+      'WEB_SEARCH_PROVIDER must be one of: none, duckduckgo, brave, tavily',
+    ),
+  WEB_SEARCH_API_KEY: z
+    .string()
+    .trim()
+    .optional()
+    .transform((value) => (value ? value : undefined)),
+  /** Wall-clock budget for one tool HTTP request, search or fetch. */
+  WEB_TOOLS_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000),
+  /** Results handed to the model by one web_search call. */
+  WEB_SEARCH_MAX_RESULTS: z.coerce.number().int().min(1).max(5).default(5),
+  /** Bytes read from one web_fetch response before the body is cut off. */
+  WEB_FETCH_MAX_BYTES: z.coerce.number().int().min(4096).max(1048576).default(65536),
+  /** Tool executions per bot per minute; over-limit answers with a tool message. */
+  BOT_TOOL_RATE_PER_MIN: z.coerce.number().int().min(1).max(1000).default(10),
+  /**
+   * Whole-turn cap while web tools are enabled, covering every provider
+   * round and the tool requests between them. A slow tool can no longer
+   * hold the stream open past the budget; the turn settles as TIMEOUT.
+   */
+  BOT_TOOL_TOTAL_TIMEOUT_MS: z.coerce.number().int().min(10000).max(600000).default(180000),
   /** How often the scheduled-message worker looks for due rows. */
   SCHEDULED_TICK_MS: z.coerce.number().int().min(1000).default(15000),
   CORS_ORIGIN: z.string().optional(),
@@ -212,6 +246,25 @@ const env = ((): Env => {
   }
 })();
 
+/**
+ * Effective web-tool provider. The key-based providers stay disabled without
+ * `WEB_SEARCH_API_KEY` — the same contract as the partially-configured
+ * translation provider: the feature turns itself off instead of failing
+ * every bot turn at request time.
+ */
+const webSearchProvider = ((): Env['WEB_SEARCH_PROVIDER'] => {
+  if (
+    (env.WEB_SEARCH_PROVIDER === 'brave' || env.WEB_SEARCH_PROVIDER === 'tavily') &&
+    !env.WEB_SEARCH_API_KEY
+  ) {
+    console.warn(
+      `WEB_SEARCH_PROVIDER=${env.WEB_SEARCH_PROVIDER} requires WEB_SEARCH_API_KEY; bot web tools stay disabled`,
+    );
+    return 'none';
+  }
+  return env.WEB_SEARCH_PROVIDER;
+})();
+
 export const config = {
   port: env.PORT,
   databaseUrl: env.DATABASE_URL,
@@ -234,6 +287,14 @@ export const config = {
   botMaxPerOwner: env.BOT_MAX_PER_OWNER,
   botMaxResponseBytes: env.BOT_MAX_RESPONSE_BYTES,
   botMaxSseEventBytes: env.BOT_MAX_SSE_EVENT_BYTES,
+  webSearchProvider,
+  webSearchEnabled: webSearchProvider !== 'none',
+  webSearchApiKey: env.WEB_SEARCH_API_KEY,
+  webToolsTimeoutMs: env.WEB_TOOLS_TIMEOUT_MS,
+  webSearchMaxResults: env.WEB_SEARCH_MAX_RESULTS,
+  webFetchMaxBytes: env.WEB_FETCH_MAX_BYTES,
+  botToolRatePerMin: env.BOT_TOOL_RATE_PER_MIN,
+  botToolTotalTimeoutMs: env.BOT_TOOL_TOTAL_TIMEOUT_MS,
   scheduledTickMs: env.SCHEDULED_TICK_MS,
   corsOrigin: env.CORS_ORIGIN,
   uploadDir: env.UPLOAD_DIR

@@ -1360,6 +1360,21 @@ async function openRoomAndApplySeq(id: number, invite: string | undefined) {
   await applySeqQuery();
 }
 
+// A failed open leaves the route pointing at a room that never loaded; the
+// store's openError becomes a full-pane retryable state, not a toast.
+const roomOpenError = computed(() => chat.openError);
+
+function retryOpenRoom() {
+  if (chat.loading) {
+    return;
+  }
+  void openRoomAndApplySeq(roomId.value, inviteCode.value);
+}
+
+function backToRoomList() {
+  void router.push('/rooms');
+}
+
 onMounted(async () => {
   chat.bind();
   loadSearchPreferences();
@@ -1714,7 +1729,38 @@ onUnmounted(() => {
         <button class="btn ghost small" @click="chat.reconnect">立即重连</button>
       </div>
 
-      <div class="messages-pane">
+      <div
+        v-if="roomOpenError"
+        class="room-error-pane"
+        role="alert"
+        data-testid="room-open-error"
+      >
+        <div class="room-error-card">
+          <p class="room-error-title">无法打开房间</p>
+          <p class="room-error-text">{{ roomOpenError }}</p>
+          <div class="room-error-actions">
+            <button
+              class="btn primary"
+              type="button"
+              data-testid="room-open-retry"
+              :disabled="chat.loading"
+              @click="retryOpenRoom"
+            >
+              重试
+            </button>
+            <button
+              class="btn ghost"
+              type="button"
+              data-testid="room-open-back"
+              @click="backToRoomList"
+            >
+              返回房间列表
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div v-else class="messages-pane">
         <div v-if="selectMode" class="select-bar" data-testid="select-toolbar">
           <span class="select-count" data-testid="selected-count">已选 {{ selectedCount }} 条</span>
           <span class="spacer"></span>
@@ -1795,7 +1841,7 @@ onUnmounted(() => {
       </div>
     </main>
 
-    <aside class="members-panel">
+    <aside v-if="!roomOpenError" class="members-panel">
       <MemberList
         :members="chat.currentMembers"
         :room-id="roomId"
@@ -2143,6 +2189,50 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+/* A room that failed to open replaces the whole message shell (list + composer
+   + member list) with one recoverable state: reason, retry, way back. */
+.room-error-pane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.room-error-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 360px;
+  width: 100%;
+  padding: 24px 20px;
+  text-align: center;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--paper);
+}
+
+.room-error-title {
+  margin: 0;
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.room-error-text {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-sub);
+  word-break: break-word;
+}
+
+.room-error-actions {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 6px;
 }
 
 /* Desktop keeps the full action row; the compact topbar swaps the secondary

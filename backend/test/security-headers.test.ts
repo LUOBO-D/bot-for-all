@@ -1,6 +1,14 @@
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../src/app';
+
+// Mirrors SECURITY_HEADERS in backend/src/app.ts (enforced below) and
+// frontend/nginx.conf (synced by the nginx test at the bottom).
+const CSP =
+  "default-src 'self'; script-src 'self' 'sha256-heFDH7JFx3Q+Tw3QesfP7cXT8wr8z/tkNpVLBm3NYUM='; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob: https:; font-src 'self'; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'";
 
 const SECURITY_HEADERS = {
   'x-content-type-options': 'nosniff',
@@ -8,9 +16,11 @@ const SECURITY_HEADERS = {
   'referrer-policy': 'no-referrer',
   'cross-origin-opener-policy': 'same-origin',
   'permissions-policy': 'camera=(), microphone=(self), geolocation=()',
+  'content-security-policy': CSP,
 } as const;
 
 const HSTS = 'max-age=31536000; includeSubDomains';
+
 
 const originalNodeEnv = process.env.NODE_ENV;
 
@@ -60,5 +70,29 @@ describe('security headers', () => {
     expect(missing.status).toBe(404);
     expectBaseHeaders(missing.headers);
     expect(missing.headers['strict-transport-security']).toBe(HSTS);
+  });
+});
+
+describe('Content-Security-Policy cross-checks', () => {
+  it('hashes the exact theme-boot inline script from frontend/index.html', () => {
+    const html = readFileSync(
+      fileURLToPath(new URL('../../frontend/index.html', import.meta.url)),
+      'utf8',
+    );
+    const inline = html.match(/<script>([\s\S]*?)<\/script>/);
+    expect(inline, 'frontend/index.html must keep the theme-boot inline script').toBeTruthy();
+    const hash = createHash('sha256').update(inline?.[1] ?? '', 'utf8').digest('base64');
+    // The script tag survives the Vite build byte-for-byte, so the source
+    // hash is the built-page hash. Editing the boot script without updating
+    // the CSP constants fails here instead of silently breaking dark mode.
+    expect(CSP).toContain(`script-src 'self' 'sha256-${hash}'`);
+  });
+
+  it('is mirrored verbatim by frontend/nginx.conf', () => {
+    const nginx = readFileSync(
+      fileURLToPath(new URL('../../frontend/nginx.conf', import.meta.url)),
+      'utf8',
+    );
+    expect(nginx).toContain(`add_header Content-Security-Policy "${CSP}" always;`);
   });
 });

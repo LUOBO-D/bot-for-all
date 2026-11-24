@@ -24,6 +24,11 @@ jobs:
       RATE_LIMIT_ENABLED: 'false'
       # e2e bots point at the fake OpenAI server on 127.0.0.1:4010.
       ALLOW_PRIVATE_BOT_URLS: 'true'
+      # Unlocks the live-Redis success path in backend/test/socket-adapter.test.ts
+      # (without it the suite only exercises the unreachable/fallback path).
+      # Deliberately not REDIS_URL: the e2e backend would then attach the
+      # Socket.IO redis adapter, a different code path than regular test boot.
+      SOCKET_ADAPTER_REDIS_URL: redis://127.0.0.1:6379
 
     services:
       mysql:
@@ -38,6 +43,18 @@ jobs:
           --health-timeout=5s
           --health-start-period=20s
           --health-retries=12
+
+      # Live Redis for the SOCKET_ADAPTER_REDIS_URL success path above; same
+      # image as the prod compose stack. Nothing persists between runs.
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
 
     steps:
       - name: Checkout
@@ -103,3 +120,21 @@ jobs:
       - name: End-to-end tests
         timeout-minutes: 20
         run: pnpm test:e2e
+
+  # Catches Dockerfile / compose-context breakage on every push without
+  # spending push secrets: builds both production images, tags them locally,
+  # never pushes. Build context must match docker-compose.prod.yml (repo root).
+  build-images:
+    name: Build production images
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Build backend image
+        run: docker build -f backend/Dockerfile -t bot-for-all-backend:ci .
+
+      - name: Build frontend image
+        run: docker build -f frontend/Dockerfile -t bot-for-all-web:ci .

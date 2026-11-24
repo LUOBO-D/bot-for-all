@@ -1,6 +1,6 @@
 # 接手与推送说明（HANDOFF）
 
-更新时间：2026-11-02
+更新时间：2026-11-25
 当前分支：`cmd`
 远端：`origin` → https://github.com/LUOBO-D/bot-for-all.git
 最近已提交基线：`7d597e0 feat: implement local group chat + AI bot demo`
@@ -19,7 +19,7 @@
 - 部署：`docker-compose.dev.yml` 只起 MySQL/Redis；`docker-compose.prod.yml` 起 Nginx + backend + MySQL + Redis。
 - CI：`.github/workflows/ci.yml`，push / PR 自动跑后端测试、前端构建、E2E。
 
-主要能力：房间/成员/角色、消息编辑与历史、回复/转发/置顶/表情、附件与媒体库、语音/视频封面、投票、收藏、草稿、定时消息、已读回执、通知中心、搜索、翻译、机器人流式回复、管理端（用户/房间/bot/举报/公告/审计/统计/导出）。
+主要能力：房间/成员/角色、消息编辑与历史、回复/转发/置顶/表情、附件与媒体库、语音/视频封面、投票、收藏、草稿、定时消息、已读回执、通知中心、搜索、翻译、机器人流式回复、**机器人联网搜索（web_search/web_fetch 工具调用，多 provider）**、跨实例 bot 状态（Redis 可选）、管理端（用户/房间/bot/举报/公告/审计/统计/导出）。
 
 ---
 
@@ -54,7 +54,7 @@ pnpm dev
 ```bash
 # 后端全量（需要 MySQL 已启动）
 pnpm --filter backend test
-# 当前：94 个测试文件，874 passed / 1 skipped
+# 当前：99 个测试文件，908 passed（配 REDIS live 变量时含跨实例用例；无 Redis 时部分 live 用例自动跳过）
 
 # 前端类型检查 + 构建
 pnpm --filter frontend build
@@ -103,7 +103,7 @@ e2e/fixtures/            测试用图片/视频
 
 ## 5. Git 提交与推送
 
-本轮收尾实现**已提交**，工作区干净；该提交尚未推送，`origin/cmd` 仍停在基线 `7d597e0`。当前提交用 `git log -1 --oneline` 查看。
+上一轮基线 `8371661`（chore: pin node and pnpm versions for handoff）已在远端；本轮收尾提交见 `git log -1 --oneline`，推送前用下面的检查确认干净。
 
 推送前检查：
 
@@ -150,13 +150,12 @@ git push origin cmd
 ```bash
 cp .env.production.example .env.production
 chmod 600 .env.production
-# 四个必填值，全部用 hex
+# 五个必填值，全部用 hex；MYSQL_APP_PASSWORD 是新业务账号 chat_app 的密码
 sed -i "s|^MYSQL_ROOT_PASSWORD=.*|MYSQL_ROOT_PASSWORD=$(openssl rand -hex 24)|" .env.production
+sed -i "s|^MYSQL_APP_PASSWORD=.*|MYSQL_APP_PASSWORD=$(openssl rand -hex 24)|" .env.production
 sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$(openssl rand -hex 32)|" .env.production
 sed -i "s|^BOT_KEY_SECRET=.*|BOT_KEY_SECRET=$(openssl rand -hex 32)|" .env.production
 sed -i "s|^ADMIN_PASSWORD=.*|ADMIN_PASSWORD=$(openssl rand -hex 16)|" .env.production
-
-docker compose --env-file .env.production -f docker-compose.prod.yml config
 docker compose --env-file .env.production -f docker-compose.prod.yml up -d --build
 
 # 首次部署后建管理员（幂等）
@@ -193,7 +192,7 @@ docker compose --env-file .env.production -f docker-compose.prod.yml \
 - [ ] `.env` 已按 `.env.example` 填好，`JWT_SECRET` / `BOT_KEY_SECRET` / `ADMIN_PASSWORD` 不是示例值。
 - [ ] `pnpm migrate` 成功，`pnpm seed:admin` 成功。
 - [ ] `curl /api/health` 返回 `db: up`。
-- [ ] 后端 874 passed / 1 skipped，E2E 78 passed，`pnpm build` 通过。
+- [ ] 后端 908 passed，E2E 78 passed，`pnpm build` 通过。
 - [ ] 已确认 `git status` 中没有 `.env`、上传文件、测试产物。
 - [ ] 已推送 `cmd` 并等待 GitHub Actions 通过。
 - [ ] 生产部署前已替换全部密钥，并确认 `ALLOW_PRIVATE_BOT_URLS=false`。
@@ -202,35 +201,35 @@ docker compose --env-file .env.production -f docker-compose.prod.yml \
 
 ## 9. QA 测试交接（当前暂停点）
 
-已完成的稳定性收尾：
+已完成的收尾（2026-11-25 本批，全部窄验证通过）：
 
-- 生产 Nginx `Permissions-Policy` 允许同源麦克风（`microphone=(self)`）。
-- 390px 顶栏改为「搜索 / 成员 / 更多」，次级动作进入底部 sheet，无横向溢出。
-- axios 30s 超时；上传 120s；`/auth/me` 8s 启动兜底。
-- Redis 运行期断线无限退避重连；初次连接 3s 超时后仍回退内存。
-- 切房代次保护、补洞失败不丢实时消息、旧消息跳转等待列表展开、搜索失败独立错误。
-- 单用户封禁/降级加 MySQL 命名锁，避免并发清空最后一个管理员。
-- 用户设置并发合并、bot 测试 10 次/分钟、链接预览 20 次/分钟 + 全局并发 8。
-- 「回到底部」不再遮挡消息；消息列表/Composer/表情补可访问性语义。
-- 生产 compose 全部服务加 json-file 日志轮转（10m×3）。
-- 本地开发库中 19 个 `sp-*` / `sp2-*` / `dbg-*` / `vis-media-*` 测试房间及附件已清理。
+- bot 停止 / `all` 去抖 / enabled 缓存跨副本化：新增 `backend/src/bot/bus.ts`（Redis pubsub，成对 pub/sub 客户端、fail-fast 掉线即静默退化），双实例同房间去抖合并为一次回复、跨副本取消、缓存失效全实例广播；无 `REDIS_URL` 时行为与旧版完全一致。
+- Redis presence 定时续期（TTL/3 单 interval，按 room 聚合），长连接不再 1 小时后显离线；Redis 掉线时的 remove 同样停止续期。
+- 房间列表未读数改每请求一次聚合 JOIN（`services/room.ts fetchUnreadCounts`），谓词与原逐房间 COUNT 子查询逐条等价。
+- 前端：房间打开失败有错误页（重试 / 返回房间列表，`data-testid="room-open-error"`）；离线启动有全屏重试门 `OfflineGate.vue`（App 级挂载）；管理端趋势图四指标共用一根 y 轴与刻度标签。
+- 生产 MySQL 改用 `chat_app` 业务用户（`MYSQL_APP_PASSWORD` 必填，`db/init/01-app-user.sh` 仅授权 `chat.*`；存量卷升级看 README 的手工 SQL）；root 只留给容器初始化。
+- CSP 双端落地（后端安全头 + nginx 同策略串）；`index.html` 内联主题脚本以 sha256 白名单化；`security-headers.test.ts` 交叉校验后端 / nginx / index.html 三处不漂移。
+- CI：test job 挂 redis service（`SOCKET_ADAPTER_REDIS_URL`），Redis live 用例进入 CI；新增 build-images job 构建两个生产镜像（不 push）。
+- 机器人联网搜索：`WEB_SEARCH_PROVIDER=duckduckgo|brave|tavily`（键控版需 `WEB_SEARCH_API_KEY`，缺失降级关闭，与翻译同契约）启用后，bot 主链带 `web_search`/`web_fetch`，2 轮上限、180s 总时限、每 bot 每分钟限速，回答末尾由服务端按实际工具结果确定性追加「来源」列表；出网全走 safe-fetch SSRF 防护、逐跳复检。
+- 撤回守卫：流式中的 bot 消息被撤回后，后端 flush/finalize 前重读并立即停流、定稿空内容 `CANCELLED`，不再广播原文；前端 delta/final 对已撤回目标不写预览与桌面通知（违反「撤回不泄露原文」反目标的泄漏已关）。
+
+真实联调记录（本机 Ollama `qwen3.5:9b` + `duckduckgo` provider）：模型真实发出 `tool_calls`，两轮搜索与「联网搜索」进度行均按预期广播，DDG 返回 202 反爬页时解析为空结果、以结构化失败文本回给模型并正常定稿——工具循环与降级路径在真实环境验证通过。搜索命中质量取决于出口 IP：DDG 对数据中心 IP 常回反爬页，正式运营建议直接配 brave/tavily。
 
 建议 QA 重点：
 
-1. 真实手机 390px / 360px：顶栏不横向滚动、标题可见、「更多」里能进设置/媒体/投票。
-2. 生产 Nginx（不是 Vite dev）：语音消息录音权限、上传、WebSocket 反代。
-3. 弱网/断网：首屏 8s 内可进入、恢复后能重新拉 `/auth/me`；切房连点不误清旧房间未读。
-4. 多实例（`--scale backend=2` + Redis）：Redis 重启后限流/在线/验证码恢复；机器人停止/去抖目前仍是进程内语义（见下）。
-5. 导出：个人 JSON/ZIP、房间媒体包、通知 CSV、管理端 CSV。
-6. 管理端并发：两个管理员同时互封/互降级应返回 `LAST_ADMIN` 或 `ADMIN_BUSY`，不能出现 0 管理员。
+1. 多实例真机（`--scale backend=2` + `REDIS_URL`）：同房间双发只回一次、停止跨副本生效、presence 续期（单机回环已有 live 用例）。
+2. 生产 Nginx 的 CSP 严格页：markdown 外链图片、语音 blob、Socket.IO polling 降级不被拦。
+3. 联网搜索换 brave/tavily 真 key 的命中质量与限流表现。
+4. 真实手机：OfflineGate 全屏、房间错误页、趋势图新轴在 390px 的布局。
+5. 沿用上批的并发清单（LAST_ADMIN / ADMIN_BUSY 不回归）。
 
-仍未处理（已知，不是回归）：
+仍未处理（已知，不是回归；体检新挖出的问题按严重度排）：
 
-- 机器人停止/去抖/禁用缓存仍是进程内状态；多副本下停止可能不跨副本、`all` 去抖可能重复回复。
-- Redis presence 的 TTL 只在 `room:join` 续期；长连接超过 1 小时可能显示离线。
-- 房间列表未读数仍是逐房间 `COUNT(*)` 子查询，超多未读/多房间时有性能风险。
-- 房间打开失败仍可能显示空壳（有 toast，但没有明确错误页/返回按钮）；离线启动 `user` 为 null 时缺少重试入口。
-- 管理端趋势图各指标独立缩放、无 y 轴刻度，不适合跨指标比较。
-- 生产 MySQL 仍用 root 连接；建议后续建独立业务用户并只授权 `chat` 库。
-- 未配置 CSP；目前依赖 DOMPurify + 安全头。
-- CI 只跑测试/构建/E2E，不构建生产 Docker 镜像；Redis live 用例在无 Redis 的 CI 中跳过。
+- `ALLOW_PRIVATE_BOT_URLS` 开着时聊天链接预览同样放行内网地址（med）：本地 Ollama 场景必须开此开关，任意成员可借链接预览探测内网（metadata 恒拒）。修法：link-preview 通道独立判定、默认恒拒内网。
+- 全文搜索 ngram 0 命中时 LIKE 兜底对 messages 做双扫描（med；已有 30/min 限流挡着）：建议兜底仅在有 roomId / 时间窗时启用。
+- 表情反应 `GROUP_CONCAT` 默认 1024 截断：单 emoji 响应人数多时 `userIds` 静默丢、高亮与名单失效（low，按 MySQL 默认值推断，unverified 实测）：改行级返回或 EXISTS。
+- 转发 streaming 占位 bot 消息会产生永久空消息、绕过「文本或附件二选一」（low）：`assertForwardable` 补 `status <> 'done'` 拒绝。
+- `AdminView` 审计搜索防抖定时器离页未清理（low）：卸载块补 `clearTimeout(auditSearchTimer)`。
+- 上传仅信客户端声明 MIME，无 magic bytes 白名单（low；nosniff + inline 前缀限制下可利用性低）。
+- 代理出口环境：tools 的 undici 出网直连、不认 `HTTP(S)_PROXY`（直连畅通的部署不受影响）；需要时以 `EnvHttpProxyAgent` 包装 safeLookup（小改动，用到再做）。
+- Redis presence 崩溃副本留下的 stale hash 靠 TTL 自然消失（≤1h），多实例下短暂幽灵在线可接受（边界行为，非性缺陷）。

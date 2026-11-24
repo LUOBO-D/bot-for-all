@@ -22,7 +22,7 @@ export function redisRetryDelay(attempt: number): number {
  * captcha): connect lazily, fail fast, and never queue commands while the link
  * is down so callers can fall back to their in-process state immediately.
  */
-const CLIENT_OPTIONS: RedisOptions = {
+export const CLIENT_OPTIONS: RedisOptions = {
   lazyConnect: true,
   connectTimeout: 2_000,
   maxRetriesPerRequest: 1,

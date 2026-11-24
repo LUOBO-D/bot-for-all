@@ -179,7 +179,7 @@ const trendSeries: TrendSeries[] = [
 
 const trendPoints = computed<TrendPoint[]>(() => stats.value?.trend ?? []);
 
-/** Peak of each metric across the window; each series is scaled to its own peak. */
+/** Peak of each metric across the window; kept for the per-series legend tooltip. */
 const trendSeriesMax = computed<Record<TrendSeries['key'], number>>(() => {
   const peaks: Record<TrendSeries['key'], number> = { users: 0, messages: 0, rooms: 0, bots: 0 };
   for (const point of trendPoints.value) {
@@ -196,13 +196,23 @@ const trendHasData = computed(() =>
   trendSeries.some((series) => trendSeriesMax.value[series.key] > 0),
 );
 
-function trendBarHeight(key: TrendSeries['key'], value: number): string {
-  const peak = trendSeriesMax.value[key];
-  if (!peak || value <= 0) {
+/** One shared ceiling: every metric is a daily count, so a single scale keeps
+ *  the four series directly comparable (a messages spike now visibly dwarfs
+ *  a users bump instead of each bar filling its own track). */
+const trendScaleMax = computed(() =>
+  Math.max(0, ...trendSeries.map((series) => trendSeriesMax.value[series.key])),
+);
+
+// Half of the shared ceiling labels the mid guide; odd peaks read as "N.5",
+// which is exact for a count axis.
+const trendScaleMid = computed(() => trendScaleMax.value / 2);
+
+function trendBarHeight(value: number): string {
+  if (!trendScaleMax.value || value <= 0) {
     return '0%';
   }
   // Keep tiny non-zero days visible instead of collapsing into the baseline.
-  return `${Math.max((value / peak) * 100, 2)}%`;
+  return `${Math.max((value / trendScaleMax.value) * 100, 2)}%`;
 }
 
 /** `2026-10-20` -> `10-20`; falls back to the raw value for unexpected input. */
@@ -1741,7 +1751,7 @@ onBeforeUnmount(() => {
             <div class="trend-copy">
               <h2 class="trend-title">数据趋势</h2>
               <p class="trend-sub">
-                最近 {{ trendDays }} 天每日新增，含 0 值日期；各指标按自身峰值缩放，悬停查看具体数值。
+                最近 {{ trendDays }} 天每日新增，含 0 值日期；四个指标共用同一纵向刻度（左上为峰值 {{ trendScaleMax }}），跨指标可直接对比，悬停查看具体数值。
               </p>
             </div>
             <ul class="trend-legend">
@@ -1771,37 +1781,46 @@ onBeforeUnmount(() => {
             <div
               class="trend-chart"
               role="img"
-              :aria-label="`最近 ${trendPoints.length} 天每日新增：新用户、消息、房间、机器人`"
+              :aria-label="`最近 ${trendPoints.length} 天每日新增（四指标同一纵向刻度）：新用户、消息、房间、机器人`"
               :style="{ '--trend-days': trendPoints.length }"
             >
-              <div class="trend-plot">
-                <div
-                  v-for="point in trendPoints"
-                  :key="point.date"
-                  class="trend-day"
-                  :title="trendDayTitle(point)"
-                >
-                  <span
-                    v-for="series in trendSeries"
-                    :key="series.key"
-                    class="trend-bar"
-                    :style="{
-                      height: trendBarHeight(series.key, point[series.key]),
-                      background: series.color,
-                    }"
-                    :title="`${point.date} · ${series.label} ${point[series.key]}`"
-                  ></span>
-                </div>
+              <!-- The shared-count y axis: the guides sit at 0 / half / peak of
+                   one scale for every series, so heights compare across colors. -->
+              <div class="trend-axis mono" aria-hidden="true">
+                <span class="trend-axis-value">{{ trendScaleMax }}</span>
+                <span class="trend-axis-value">{{ trendScaleMid }}</span>
+                <span class="trend-axis-value">0</span>
               </div>
-              <div class="trend-ticks" aria-hidden="true">
-                <span
-                  v-for="(point, index) in trendPoints"
-                  :key="point.date"
-                  class="trend-tick mono"
-                  :class="{ 'is-hidden': !trendTickVisible(index) }"
-                >
-                  {{ trendDayLabel(point.date) }}
-                </span>
+              <div class="trend-body">
+                <div class="trend-plot">
+                  <div
+                    v-for="point in trendPoints"
+                    :key="point.date"
+                    class="trend-day"
+                    :title="trendDayTitle(point)"
+                  >
+                    <span
+                      v-for="series in trendSeries"
+                      :key="series.key"
+                      class="trend-bar"
+                      :style="{
+                        height: trendBarHeight(point[series.key]),
+                        background: series.color,
+                      }"
+                      :title="`${point.date} · ${series.label} ${point[series.key]}`"
+                    ></span>
+                  </div>
+                </div>
+                <div class="trend-ticks" aria-hidden="true">
+                  <span
+                    v-for="(point, index) in trendPoints"
+                    :key="point.date"
+                    class="trend-tick mono"
+                    :class="{ 'is-hidden': !trendTickVisible(index) }"
+                  >
+                    {{ trendDayLabel(point.date) }}
+                  </span>
+                </div>
               </div>
             </div>
           </div>
@@ -3249,10 +3268,38 @@ onBeforeUnmount(() => {
   opacity: 0.45;
 }
 
+/* Axis column + plot body side by side; the body keeps the old column stack
+   (plot on top, day ticks below) untouched. */
 .trend-chart {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: calc(var(--trend-days, 14) * 36px + 26px);
+}
+
+/* Shared y axis: peak / mid / 0 labels. Space-between over the plot's exact
+   height centers the mid label on the 50% guide line. */
+.trend-axis {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-end;
+  width: 26px;
+  flex: none;
+  height: 150px;
+  color: var(--faint);
+  line-height: 1;
+}
+
+.trend-axis-value {
+  white-space: nowrap;
+}
+
+.trend-body {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  flex: 1 1 0;
   min-width: calc(var(--trend-days, 14) * 36px);
 }
 

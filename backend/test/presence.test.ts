@@ -1,7 +1,8 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { logger } from '../src/logger';
 import {
   PRESENCE_KEY_PREFIX,
+  PRESENCE_RENEWAL_INTERVAL_MS,
   PRESENCE_TTL_SECONDS,
   __setPresenceRedisForTests,
   addSocket,
@@ -9,6 +10,7 @@ import {
   isOnline,
   onlineUserIds,
   removeSocket,
+  renewPresenceTtls,
   type PresenceRedis,
 } from '../src/services/presence';
 
@@ -196,5 +198,75 @@ describe('redis presence backend', () => {
     expect(await addSocket(fallbackRoom, 5, 'after-close')).toBe(true);
     expect(await onlineUserIds(fallbackRoom)).toEqual([5]);
     expect(redis.hashes.size).toBe(1);
+  });
+});
+
+describe('presence ttl renewal', () => {
+  // closePresenceRedis also clears the renewal registry, so every test starts
+  // exact: rooms left over from earlier tests are never swept again.
+  beforeEach(async () => {
+    await closePresenceRedis();
+  });
+
+  it('renews each room hash while any of its sockets stays connected', async () => {
+    const redis = new FakePresenceRedis();
+    __setPresenceRedisForTests(redis);
+    const roomId = uniqueRoomId();
+    const key = `${PRESENCE_KEY_PREFIX}${roomId}`;
+
+    await addSocket(roomId, 7, 'socket-a');
+    await addSocket(roomId, 8, 'socket-b');
+    redis.expirations.length = 0;
+
+    // The interval body renews once per room, not once per socket.
+    await renewPresenceTtls();
+    expect(redis.expirations).toEqual([{ key, seconds: PRESENCE_TTL_SECONDS }]);
+
+    // socket-a was user 7's only socket: the user's room presence is gone
+    // (true), yet renewal must continue for user 8's socket-b.
+    expect(await removeSocket(roomId, 7, 'socket-a')).toBe(true);
+    redis.expirations.length = 0;
+    await renewPresenceTtls();
+    expect(redis.expirations).toEqual([{ key, seconds: PRESENCE_TTL_SECONDS }]);
+
+    // The last socket leaving ends the room's renewal.
+    expect(await removeSocket(roomId, 8, 'socket-b')).toBe(true);
+    redis.expirations.length = 0;
+    await renewPresenceTtls();
+    expect(redis.expirations).toEqual([]);
+  });
+
+  it('stops renewal even when the redis remove fails', async () => {
+    const redis = new FakePresenceRedis();
+    __setPresenceRedisForTests(redis);
+    const roomId = uniqueRoomId();
+
+    await addSocket(roomId, 7, 'socket-a');
+
+    // The disconnect happens during an outage: the remove falls back to
+    // memory, but renewal must still stop for the vanished socket.
+    redis.failure = new Error('redis down');
+    await expect(removeSocket(roomId, 7, 'socket-a')).resolves.toBe(false);
+    redis.failure = null;
+
+    redis.expirations.length = 0;
+    await renewPresenceTtls();
+    expect(redis.expirations).toEqual([]);
+  });
+
+  it('renews nothing for sockets the memory backend alone holds', async () => {
+    __setPresenceRedisForTests(null);
+    const roomId = uniqueRoomId();
+
+    expect(await addSocket(roomId, 7, 'socket-a')).toBe(true);
+
+    // A redis client appearing later must not inherit renewal duty.
+    const redis = new FakePresenceRedis();
+    __setPresenceRedisForTests(redis);
+    await renewPresenceTtls();
+    expect(redis.expirations).toEqual([]);
+    // A third of the lifetime: three missed intervals still leave the full
+    // TTL as the recovery margin.
+    expect(PRESENCE_RENEWAL_INTERVAL_MS).toBe((PRESENCE_TTL_SECONDS / 3) * 1000);
   });
 });

@@ -19,11 +19,6 @@ const ROOM_SELECT = `
          r.created_at,
          rm.role, rm.last_read_seq, rm.muted, rm.favorite, rm.group_name, rm.archived,
          (SELECT COUNT(*) FROM room_members x WHERE x.room_id = r.id) AS member_count,
-         (SELECT COUNT(*) FROM messages m
-           WHERE m.room_id = r.id
-             AND m.seq > rm.last_read_seq
-             AND m.sender_id != rm.user_id
-             AND m.deleted_at IS NULL) AS unread_count,
          lm.seq AS last_seq, lm.content AS last_content, lm.created_at AS last_created_at,
          lm.deleted_at AS last_deleted_at,
          lu.display_name AS last_sender_name
@@ -66,7 +61,41 @@ async function getNonMemberRoomSummary(roomId: number, userId: number): Promise<
   return mapRoom(row, userId, false);
 }
 
-function mapRoom(row: RowDataPacket, userId: number, joined: boolean): RoomSummary {
+/**
+ * Unread counts for the user's joined rooms, aggregated in one query instead
+ * of a correlated COUNT subquery per room row. With `roomId` it covers a
+ * single room (summary refresh); without it, every joined room (room list).
+ * Mirrors the old per-row rule: seq above the member's read cursor, not sent
+ * by the member, not soft-deleted.
+ */
+async function fetchUnreadCounts(
+  userId: number,
+  roomId?: number,
+): Promise<Map<number, number>> {
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT m.room_id AS room_id, COUNT(*) AS unread
+     FROM messages m
+     JOIN room_members rm ON rm.room_id = m.room_id AND rm.user_id = ?
+     WHERE m.seq > rm.last_read_seq
+       AND m.sender_id != rm.user_id
+       AND m.deleted_at IS NULL
+       ${roomId ? 'AND m.room_id = ?' : ''}
+     GROUP BY m.room_id`,
+    roomId ? [userId, roomId] : [userId],
+  );
+  const counts = new Map<number, number>();
+  for (const row of rows) {
+    counts.set(Number(row.room_id), Math.max(Number(row.unread), 0));
+  }
+  return counts;
+}
+
+function mapRoom(
+  row: RowDataPacket,
+  userId: number,
+  joined: boolean,
+  unreadCounts: ReadonlyMap<number, number> = new Map(),
+): RoomSummary {
   const lastSeq = row.last_seq == null ? null : Number(row.last_seq);
   return {
     id: Number(row.id),
@@ -80,11 +109,7 @@ function mapRoom(row: RowDataPacket, userId: number, joined: boolean): RoomSumma
     isPublic: Boolean(row.is_public),
     inviteCode: Number(row.owner_id) === userId && row.invite_code ? String(row.invite_code) : null,
     memberCount: Number(row.member_count ?? 0),
-    unreadCount: joined
-      ? row.unread_count != null
-        ? Math.max(Number(row.unread_count), 0)
-        : Math.max(Number(row.max_seq) - Number(row.last_read_seq ?? 0), 0)
-      : 0,
+    unreadCount: joined ? Math.max(unreadCounts.get(Number(row.id)) ?? 0, 0) : 0,
     lastMessage:
       lastSeq == null
         ? null
@@ -115,6 +140,7 @@ export async function listRooms(userId: number): Promise<{
   public: RoomSummary[];
   publicTotal: number;
 }> {
+  const unread = await fetchUnreadCounts(userId);
   const [mineRows] = await pool.query<RowDataPacket[]>(
     `${ROOM_SELECT} WHERE rm.user_id = ?
      ORDER BY rm.favorite DESC, COALESCE(lm.created_at, r.created_at) DESC, r.id DESC`,
@@ -133,7 +159,7 @@ export async function listRooms(userId: number): Promise<{
     [userId],
   );
   return {
-    mine: mineRows.map((row) => mapRoom(row, userId, true)),
+    mine: mineRows.map((row) => mapRoom(row, userId, true, unread)),
     public: publicRows.map((row) => mapRoom(row, userId, false)),
     publicTotal: Number(totalRows[0]?.total ?? 0),
   };
@@ -180,6 +206,7 @@ export async function searchPublicRooms(
 }
 
 export async function getRoomSummary(roomId: number, userId: number): Promise<RoomSummary> {
+  const unread = await fetchUnreadCounts(userId, roomId);
   const [rows] = await pool.query<RowDataPacket[]>(
     `${ROOM_SELECT} WHERE rm.user_id = ? AND r.id = ?`,
     [userId, roomId],
@@ -188,7 +215,7 @@ export async function getRoomSummary(roomId: number, userId: number): Promise<Ro
   if (!row) {
     throw notFound('ROOM_NOT_FOUND', 'Room not found');
   }
-  return mapRoom(row, userId, true);
+  return mapRoom(row, userId, true, unread);
 }
 
 export async function createRoom(

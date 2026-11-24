@@ -1411,6 +1411,18 @@ export async function finalizeMessage(
   ]);
 }
 
+/**
+ * Whether the streaming guard must drop this row: withdrawn, or gone entirely
+ * (rows are only hard-deleted by retention sweeps, but a missing row can no
+ * longer receive content either).
+ */
+export async function isMessageDeleted(id: number): Promise<boolean> {
+  const [rows] = await pool.query<RowDataPacket[]>('SELECT deleted_at FROM messages WHERE id = ?', [
+    id,
+  ]);
+  return rows.length === 0 || rows[0].deleted_at != null;
+}
+
 export async function messageExistsInRoom(id: number, roomId: number): Promise<boolean> {
   const [rows] = await pool.query<RowDataPacket[]>(
     'SELECT 1 FROM messages WHERE id = ? AND room_id = ?',

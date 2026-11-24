@@ -106,6 +106,42 @@ describe('rooms', () => {
     const summary = list.mine.find((item) => item.id === room.id);
     expect(summary?.unreadCount).toBe(1);
   });
+  it('aggregates unread counts correctly across multiple rooms', async () => {
+    const owner = await createTestUser('unread_multi_owner');
+    const member = await createTestUser('unread_multi_member');
+    const quiet = await createRoom(owner.id, { name: 'unread-quiet', isPublic: true });
+    const busy = await createRoom(owner.id, { name: 'unread-busy', isPublic: true });
+    const read = await createRoom(owner.id, { name: 'unread-read', isPublic: true });
+    await joinRoom(member.id, quiet.id);
+    await joinRoom(member.id, busy.id);
+    await joinRoom(member.id, read.id);
+
+    for (let index = 1; index <= 3; index += 1) {
+      await createMessage({
+        roomId: busy.id,
+        senderId: owner.id,
+        senderType: 'user',
+        content: `busy-${index}`,
+        clientMsgId: `unread-multi-busy-${index}`,
+      });
+    }
+    const readRoomMessage = await createMessage({
+      roomId: read.id,
+      senderId: owner.id,
+      senderType: 'user',
+      content: 'seen',
+      clientMsgId: 'unread-multi-read-1',
+    });
+    await updateReadCursor(read.id, member.id, readRoomMessage.seq);
+
+    const list = await listRooms(member.id);
+    const countFor = (roomId: number) =>
+      list.mine.find((item) => item.id === roomId)?.unreadCount;
+    // One aggregate query must produce each room's own count, including zero.
+    expect(countFor(quiet.id)).toBe(0);
+    expect(countFor(busy.id)).toBe(3);
+    expect(countFor(read.id)).toBe(0);
+  });
 
   it('excludes own and recalled messages from unread', async () => {
     const owner = await createTestUser('unread2_owner');

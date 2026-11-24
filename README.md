@@ -8,9 +8,9 @@
 - 消息：实时收发、回复、编辑历史、撤回、表情、置顶、转发（单条/批量）、草稿、定时发送、已读回执、未读定位。
 - 媒体：图片灯箱（翻页/缩放/滑动）、语音、视频首帧封面、媒体库筛选与批量删除、附件配额与清理。
 - 协作：全局/房间搜索、收藏消息、投票、消息翻译、通知中心（筛选/搜索/免打扰）、桌面通知。
-- 机器人：全局/房间级 bot、OpenAI 兼容流式回复、SSRF 防护、上下文与频率限制、失败重试/停止。
+- 机器人：全局/房间级 bot、OpenAI 兼容流式回复、联网搜索（`web_search`/`web_fetch` 工具调用，DuckDuckGo/Brave/Tavily 可切换）、SSRF 防护、上下文与频率限制、失败重试/停止。
 - 管理端：用户/房间/bot/举报/公告、审计日志、趋势统计、CSV/JSON/ZIP 导出、批量封禁与删除。
-- 运维：MySQL 迁移、Redis 可选（限流 + Socket.IO 多实例）、Docker 生产编排、GitHub Actions CI。
+- 运维：MySQL 迁移（生产用非 root 业务账号）、Redis 可选（限流 + Socket.IO 多实例 + bot 跨实例状态）、CSP 双端、Docker 生产编排、GitHub Actions CI（含生产镜像构建）。
 
 
 ## 前置
@@ -63,6 +63,10 @@ pnpm dev
 | `TRANSLATE_TIMEOUT_MS` | 单次翻译请求的总超时（含读取响应体），默认 `15000`，正整数。超时、非 2xx、响应体超过 64 KiB、响应无 `choices` 或译文为空统一返回 502 `TRANSLATION_FAILED` |
 | `TRANSLATE_CACHE_TTL_MS` | 成功译文在进程内缓存的有效期（毫秒），默认 `3600000`（1 小时），`0` 关闭缓存。key 为 `messageId:editedAt:targetLang`，消息编辑后自动失效；只缓存成功译文，失败（502）与未配置（503）不缓存，且不保存原文 |
 | `TRANSLATE_CACHE_MAX` | 翻译缓存条目上限，默认 `500`，范围 `1..5000`；超限按 LRU 淘汰最久未使用的条目。缓存为单进程内存，多实例各自独立 |
+| `WEB_SEARCH_PROVIDER` / `WEB_SEARCH_API_KEY` | 机器人联网搜索开关，默认 `none`（不启用，请求体不带 `tools`）。`duckduckgo` 免 key 即用；`brave` / `tavily` 需同时设置 `WEB_SEARCH_API_KEY`，缺失时功能保持关闭（与翻译 provider 同一契约），非法取值在启动时被拒绝。启用后所有 enabled 机器人的主链请求自动携带 `web_search`（搜索）与 `web_fetch`（抓取网页正文）两个工具；bot-test 调试路径不受影响 |
+| `WEB_TOOLS_TIMEOUT_MS` | 单次工具 HTTP 请求（搜索或抓取）的墙上时钟预算，默认 `10000`，范围 `1000..60000`。所有工具出网都走 `safeFetch` + `assertSafeBotUrl`（与机器人 provider 相同的 SSRF 防护，重定向逐跳复检），超时作为工具失败文本返回给模型，不中止整次生成 |
+| `WEB_SEARCH_MAX_RESULTS` | 一次 `web_search` 交给模型的结果条数，默认 `5`，范围 `1..5` |
+| `WEB_FETCH_MAX_BYTES` | 一次 `web_fetch` 最多读取的字节数，默认 `65536`（64 KiB），范围 `4096..1048576`；超限截断并附截断标记，不报错。工具执行每 bot 每分钟限 `BOT_TOOL_RATE_PER_MIN`（默认 `10`，范围 `1..1000`）次，超限以「速率受限」tool 消息回复模型而不中止生成；模型每轮最多 2 次工具调用（串行，其中 `web_fetch` 每轮≤1 次），之后请求不再携带 `tools` 强制收敛。整次生成（多轮 + 工具请求）有 `BOT_TOOL_TOTAL_TIMEOUT_MS`（默认 `180000`，范围 `10000..600000`）总时限，超时把回复定稿为 `TIMEOUT` 失败；回答末尾由服务端按实际工具结果确定性追加「来源」markdown 列表 |
 
 `BOT_KEY_SECRET` 一旦更换，已存库的 bot API Key 将无法解密（列表里显示 `***`，需要重新填 Key）。
 
@@ -73,8 +77,9 @@ pnpm dev
 ```bash
 cp .env.production.example .env.production
 chmod 600 .env.production
-# 四个必填值，全部用 hex（MYSQL_ROOT_PASSWORD 会被拼进 DATABASE_URL）
+# 五个必填值，全部用 hex（MYSQL_ROOT_PASSWORD / MYSQL_APP_PASSWORD 会被拼进 DATABASE_URL）
 sed -i "s|^MYSQL_ROOT_PASSWORD=.*|MYSQL_ROOT_PASSWORD=$(openssl rand -hex 24)|" .env.production
+sed -i "s|^MYSQL_APP_PASSWORD=.*|MYSQL_APP_PASSWORD=$(openssl rand -hex 24)|" .env.production
 sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$(openssl rand -hex 32)|" .env.production
 sed -i "s|^BOT_KEY_SECRET=.*|BOT_KEY_SECRET=$(openssl rand -hex 32)|" .env.production
 sed -i "s|^ADMIN_PASSWORD=.*|ADMIN_PASSWORD=$(openssl rand -hex 16)|" .env.production
@@ -83,6 +88,15 @@ sed -i "s|^ADMIN_PASSWORD=.*|ADMIN_PASSWORD=$(openssl rand -hex 16)|" .env.produ
 docker compose --env-file .env.production -f docker-compose.prod.yml config
 
 docker compose --env-file .env.production -f docker-compose.prod.yml up -d --build
+```
+
+数据库账号：`backend` 的 `DATABASE_URL` 用非 root 业务账号 `chat_app`（密码为 `MYSQL_APP_PASSWORD`），由 `db/init/01-app-user.sh` 在 MySQL 数据卷首次初始化时创建（对 `chat.*` 有全部权限，迁移 / seed / 运行时共用）；root 仅用于容器初始化与健康检查。已有 `mysql-data` 卷的存量部署升级时 init 脚本不会重跑，需进 MySQL 手动执行同等内容（幂等，密码以 `.env.production` 为准）：
+
+```sql
+CREATE USER IF NOT EXISTS 'chat_app'@'%' IDENTIFIED BY '<MYSQL_APP_PASSWORD>';
+ALTER USER 'chat_app'@'%' IDENTIFIED BY '<MYSQL_APP_PASSWORD>';
+GRANT ALL PRIVILEGES ON chat.* TO 'chat_app'@'%';
+FLUSH PRIVILEGES;
 ```
 
 - 访问：`http://<host>:8080`（`WEB_PORT` 可改，例如 `WEB_PORT=80`）。
@@ -104,7 +118,7 @@ docker compose --env-file .env.production -f docker-compose.prod.yml up -d --bui
 | mysql | 无 | 仅 `data` 网络内可达，数据在 `mysql-data` 卷 |
 | redis | 无 | 仅 `data` 网络内可达 `redis:6379`，无持久化（限流计数 + Socket.IO 跨实例广播） |
 
-`frontend/nginx.conf` 负责：SPA fallback（未知路径回 `index.html`）、`/api/` 与 `/socket.io/` 反代到 `backend:3000`（WS 带 `Upgrade`/`Connection` 头，`proxy_read_timeout 300s` 大于心跳间隔）、gzip、`X-Content-Type-Options` / `X-Frame-Options` / `Referrer-Policy` / `Permissions-Policy`、`client_max_body_size 12m`（附件单文件上限 10 MB）。
+`frontend/nginx.conf` 负责：SPA fallback（未知路径回 `index.html`）、`/api/` 与 `/socket.io/` 反代到 `backend:3000`（WS 带 `Upgrade`/`Connection` 头，`proxy_read_timeout 300s` 大于心跳间隔）、gzip、`X-Content-Type-Options` / `X-Frame-Options` / `Referrer-Policy` / `Permissions-Policy` / `Content-Security-Policy`（与后端同一份策略，`backend/test/security-headers.test.ts` 校验两份不漂移；只放行自身脚本资源、`blob:`/`data:`/https 图片媒体、ws/wss 连接，无 hash 的内联脚本一律拒绝）、`client_max_body_size 12m`（附件单文件上限 10 MB）。
 
 附件与用户头像保存在 `uploads` 命名卷（挂载到 `/app/backend/uploads`），`docker compose down` 不会删除；只有 `down -v` 会同时清空 MySQL 与附件/头像卷。
 

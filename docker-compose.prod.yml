@@ -30,9 +30,14 @@ services:
     environment:
       MYSQL_DATABASE: chat
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env.production (see .env.production.example)}
+      # Non-root business account for the backend's DATABASE_URL. Only this
+      # init script runs in prod (not the whole db/init dir: 00-databases.sql
+      # would create the chat_test/chat_e2e dev databases here).
+      MYSQL_APP_PASSWORD: ${MYSQL_APP_PASSWORD:?set MYSQL_APP_PASSWORD in .env.production (see .env.production.example)}
       TZ: UTC
     volumes:
       - mysql-data:/var/lib/mysql
+      - ./db/init/01-app-user.sh:/docker-entrypoint-initdb.d/01-app-user.sh:ro
     healthcheck:
       # Password comes from the container env, so it never appears in the
       # compose file or in `docker inspect` arguments.
@@ -89,7 +94,10 @@ services:
     environment:
       NODE_ENV: production
       PORT: "3000"
-      DATABASE_URL: mysql://root:${MYSQL_ROOT_PASSWORD}@mysql:3306/chat
+      # Non-root business account created by the first-init script; root stays
+      # confined to MySQL container initialization. Migrations, seed-admin and
+      # runtime all run through this URL (GRANT ALL ON chat.* covers them).
+      DATABASE_URL: mysql://chat_app:${MYSQL_APP_PASSWORD}@mysql:3306/chat
       # Shared rate-limit counters; without it the backend keeps them in-process.
       REDIS_URL: redis://redis:6379
       # Production hardening: bot base URLs may not target loopback/private

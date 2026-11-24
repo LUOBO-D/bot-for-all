@@ -57,6 +57,9 @@ interface ChatState {
   dndAllowMentions: boolean;
   bound: boolean;
   loading: boolean;
+  // Set when the latest openRoom failed: the room-level error state the
+  // ChatView renders as a retryable panel. Cleared by the next open attempt.
+  openError: string | null;
   connected: boolean;
 }
 
@@ -488,6 +491,7 @@ export const useChatStore = defineStore('chat', {
     dndAllowMentions: true,
     bound: false,
     loading: false,
+    openError: null,
     connected: false,
   }),
   getters: {
@@ -956,6 +960,9 @@ export const useChatStore = defineStore('chat', {
       }
       this.currentRoomId = roomId;
       this.loading = true;
+      // Each attempt starts from a clean error state so the retry path never
+      // shows a stale panel while the new request is in flight.
+      this.openError = null;
       try {
         await http.post(`/rooms/${roomId}/join`, {
           inviteCode: inviteCode || undefined,
@@ -1031,9 +1038,13 @@ export const useChatStore = defineStore('chat', {
         return true;
       } catch (error) {
         // A stale run's failure belongs to the room the user already left;
-        // toasting it would blame the new room for the old request.
+        // surfacing it would blame the new room for the old request.
         if (!stale()) {
-          ElMessage.error(errorMessage(error));
+          // The room never opened (join, handshake or history failed), so no
+          // half-open state lingers: currentRoomId is dropped and the view
+          // renders a retryable error state instead of an empty shell.
+          this.currentRoomId = null;
+          this.openError = errorMessage(error);
         }
         return false;
       } finally {
@@ -1760,7 +1771,9 @@ export const useChatStore = defineStore('chat', {
       const target = this.messages[payload.roomId]?.find(
         (message) => message.seq === payload.seq,
       );
-      if (!target) {
+      // A withdrawn row must never grow: a delta racing the recall broadcast
+      // would append text behind the recall cover.
+      if (!target || target.deleted) {
         return;
       }
       target.content += payload.delta;
@@ -1774,9 +1787,12 @@ export const useChatStore = defineStore('chat', {
         if (room?.lastMessage && payload.seq >= room.lastMessage.seq) {
           room.lastMessage = {
             ...room.lastMessage,
+            // An empty CANCELLED final is the recall-stop shape: the cover
+            // from `message:updated` stands, and '生成失败' must not overwrite
+            // it. Other failures keep announcing themselves.
             content: payload.content
               ? plainPreview(payload.content)
-              : payload.status === 'error'
+              : payload.status === 'error' && payload.error !== 'CANCELLED'
                 ? '生成失败'
                 : room.lastMessage.content,
           };
@@ -1809,6 +1825,18 @@ export const useChatStore = defineStore('chat', {
         );
       }
       if (!target) {
+        return;
+      }
+      // Withdrawn mid-stream: the recall cover already stands in the
+      // transcript; the final must not re-leak the partial text into the
+      // preview or fire a notification. The cover reuses handleUpdated's
+      // withdrawn-preview shape.
+      if (target.deleted) {
+        this.updateRoomPreview(payload.roomId, {
+          ...target,
+          content: '消息已撤回',
+          status: 'done',
+        }, {});
         return;
       }
       target.content = payload.content;
