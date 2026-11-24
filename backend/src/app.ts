@@ -35,7 +35,7 @@ const SECURITY_HEADERS: Readonly<Record<string, string>> = {
   // markdown messages reference remote images (lightbox) and media;
   // ws:/wss: cover the same-origin Socket.IO connection.
   'Content-Security-Policy':
-    "default-src 'self'; script-src 'self' 'sha256-heFDH7JFx3Q+Tw3QesfP7cXT8wr8z/tkNpVLBm3NYUM='; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob: https:; font-src 'self'; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'",
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob: https:; font-src 'self'; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'",
 };
 
 const HSTS_HEADER = 'max-age=31536000; includeSubDomains';

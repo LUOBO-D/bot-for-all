@@ -8,7 +8,7 @@ import { createApp } from '../src/app';
 // Mirrors SECURITY_HEADERS in backend/src/app.ts (enforced below) and
 // frontend/nginx.conf (synced by the nginx test at the bottom).
 const CSP =
-  "default-src 'self'; script-src 'self' 'sha256-heFDH7JFx3Q+Tw3QesfP7cXT8wr8z/tkNpVLBm3NYUM='; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob: https:; font-src 'self'; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'";
+  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob: https:; font-src 'self'; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'";
 
 const SECURITY_HEADERS = {
   'x-content-type-options': 'nosniff',
@@ -74,18 +74,18 @@ describe('security headers', () => {
 });
 
 describe('Content-Security-Policy cross-checks', () => {
-  it('hashes the exact theme-boot inline script from frontend/index.html', () => {
+  it('keeps frontend/index.html free of inline scripts and the CSP hash-free', () => {
     const html = readFileSync(
       fileURLToPath(new URL('../../frontend/index.html', import.meta.url)),
       'utf8',
     );
+    // The theme is night-only now, so no runtime boot script remains: any
+    // <script> in index.html must carry a src, and script-src must not
+    // needlessly whitelist a hash that would silently re-admit inline code.
     const inline = html.match(/<script>([\s\S]*?)<\/script>/);
-    expect(inline, 'frontend/index.html must keep the theme-boot inline script').toBeTruthy();
-    const hash = createHash('sha256').update(inline?.[1] ?? '', 'utf8').digest('base64');
-    // The script tag survives the Vite build byte-for-byte, so the source
-    // hash is the built-page hash. Editing the boot script without updating
-    // the CSP constants fails here instead of silently breaking dark mode.
-    expect(CSP).toContain(`script-src 'self' 'sha256-${hash}'`);
+    expect(inline, 'frontend/index.html must not contain inline scripts').toBeNull();
+    expect(CSP).toContain(`script-src 'self';`);
+    expect(CSP, 'script-src must not whitelist any sha256 hash').not.toContain('sha256-');
   });
 
   it('is mirrored verbatim by frontend/nginx.conf', () => {
